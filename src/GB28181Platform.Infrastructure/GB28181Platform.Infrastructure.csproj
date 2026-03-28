@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\GB28181Platform.Domain\GB28181Platform.Domain.csproj" />
+    <ProjectReference Include="..\GB28181Platform.Application\GB28181Platform.Application.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SqlSugarCore" Version="5.1.4.214" />
+    <PackageReference Include="StackExchange.Redis" Version="2.12.8" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
