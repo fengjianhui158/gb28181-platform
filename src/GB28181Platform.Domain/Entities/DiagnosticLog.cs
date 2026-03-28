@@ -29,5 +29,13 @@ public class DiagnosticLog
 
     public int DurationMs { get; set; }
 
+    /// <summary>
+    /// 步骤类型 (0=Ping, 1=PortCheck, 2=BrowserCheck)
+    /// </summary>
+    public int StepType { get; set; }
+
+    [SugarColumn(Length = 500, IsNullable = true)]
+    public string? ScreenshotPath { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.Now;
 }
