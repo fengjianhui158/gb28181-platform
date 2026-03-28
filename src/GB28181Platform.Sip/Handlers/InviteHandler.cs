@@ -23,13 +23,13 @@ public class InviteHandler
     /// <summary>
     /// 向摄像机发送 INVITE 请求拉流
     /// </summary>
-    public async Task<bool> SendInviteAsync(string deviceId, string channelId, string mediaIp, int mediaPort)
+    public Task<bool> SendInviteAsync(string deviceId, string channelId, string mediaIp, int mediaPort)
     {
         var session = _sessionManager.Get(deviceId);
         if (session == null)
         {
             _logger.LogWarning("设备 {DeviceId} 不在线，无法拉流", deviceId);
-            return false;
+            return Task.FromResult(false);
         }
 
         // 构建 SDP (PS 流, RTP over UDP)
@@ -50,6 +50,6 @@ y=0100000001";
 
         // TODO: 使用 sipsorcery SIPTransport 发送 INVITE 事务
         // 这里先记录流程，后续完善 SIP 事务处理
-        return true;
+        return Task.FromResult(true);
     }
 }

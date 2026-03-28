@@ -17,5 +17,11 @@ dist/
 Thumbs.db
 .DS_Store
 
+# Logs
+*.log
+
 # Claude
 .claude/
+
+# Kiro
+.kiro/
