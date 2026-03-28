@@ -16,6 +16,9 @@ public class AiConversation
     [SugarColumn(Length = 36)]
     public string SessionId { get; set; } = string.Empty;
 
+    [SugarColumn(Length = 20, IsNullable = true)]
+    public string? DeviceId { get; set; }
+
     /// <summary>
     /// user / assistant / function
     /// </summary>
