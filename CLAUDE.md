@@ -45,6 +45,17 @@ tests/GB28181Platform.Tests/         # xUnit + NSubstitute 单元测试（待创
 - **实施计划**: `docs/superpowers/plans/2026-03-28-gb28181-platform.md` ← **17个Task的完整代码**
 - **头脑风暴记录**: `docs/brainstorming-record.md`
 
+## 会话接力规则
+
+> **核心原则**：进度以 git commit 为准，新会话无需人工提醒。
+
+1. 新会话启动时自动读取本文件 + 执行 `git log --oneline -10` 确定进度
+2. 如果某个 Task **已 commit** → 跳过，做下一个
+3. 如果某个 Task **未 commit 但有未提交的改动**（`git status` 可见）→ 说明上个会话中断了，检查改动内容，继续完成并 commit
+4. 每个 Task 完成 commit 后，更新下方"已完成"表（加 commit hash）
+5. **开始新 Task 前评估剩余 token**：如果剩余上下文不足以完成该 Task（含编译验证和 commit），则停止并告知用户"剩余 token 不足以完成 Task N，建议新开会话继续"
+6. 如果 Task 做到一半需要中断，先 `git stash` 或提交一个 WIP commit：`git commit -m "wip(scope): partial implementation of Task N"`
+
 ## 当前进度
 
 ### 已完成 ✅
