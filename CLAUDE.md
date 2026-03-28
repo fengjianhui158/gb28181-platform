@@ -63,24 +63,24 @@ tests/GB28181Platform.Tests/         # xUnit + NSubstitute 单元测试（待创
 | Task 1 | `68d3927` | .NET 9 → .NET 8 降级 + Convert.ToHexStringLower 兼容修复 |
 | Task 2 | `943c798` | 科技风全局主题 (theme.css + animations.css + App.vue 导航) |
 | Task 3 | `6a7806d` | 设备列表页改造 (统计卡片 + 状态灯 + 搜索筛选) |
+| Task 4 | `4f56b39` | ZLMediaKit REST 客户端 (IZlmClient + ZlmClient) |
+| Task 5 | `5a294fb` | SIP INVITE + StreamAppService + StreamController |
+| Task 6 | `97c88db` | WebRTC 实时预览前端 (WHEP 连接 + 2x2 分屏) |
+| Task 7 | `f6bade7` | 诊断引擎核心框架 (IDiagnosticStep + DiagnosticEngine) |
+| Task 8 | `6714ac9` | PingCheckStep + PortCheckStep |
+| Task 9 | `befa6e4` | BrowserCheckStep (Playwright + Qwen 视觉) |
+| Task 10 | `f54a6d7` | 诊断引擎接入 API + 设备离线自动触发 |
+| Task 11 | `19a88f9` | Qwen 客户端 + IAgentFunction + FunctionRegistry |
+| Task 12 | `75728d1` | AiAgentService (Function Calling 循环, max 5次) |
+| Task 13 | `a5edd73` | 创建 xUnit 测试项目 + 补全 DiagnosticLog 实体字段 |
+| Task 14 | `a0f7847` | 诊断引擎单元测试 (3个测试全部通过) |
+| Task 15 | `723df0a` | AI Agent 单元测试 (6个测试全部通过, 总计9/9) |
+| Task 16 | `f265b34` | 科技风改造诊断面板 + AI 问答页 |
 
-### 下一步 → Task 4 起
+### 下一步 → Task 17
 
 | Task | 内容 | 复杂度 | 依赖 |
 |------|------|--------|------|
-| **4** | ZLMediaKit REST 客户端 (IZlmClient) | 中 | 无 |
-| **5** | SIP INVITE + StreamAppService + StreamController | 高 | Task 4 |
-| **6** | WebRTC 实时预览前端 (WHEP 连接) | 中 | Task 5 |
-| **7** | 诊断引擎核心框架 (IDiagnosticStep + DiagnosticEngine) | 高 | 无 |
-| **8** | PingCheckStep + PortCheckStep | 低 | Task 7 |
-| **9** | BrowserCheckStep (Playwright + Qwen 视觉) | 高 | Task 7 |
-| **10** | 诊断引擎接入 API + 设备离线自动触发 | 中 | Task 7-9 |
-| **11** | Qwen 客户端 + IAgentFunction + FunctionRegistry | 高 | 无 |
-| **12** | AiAgentService (Function Calling 循环, max 5次) | 高 | Task 11 |
-| **13** | 创建 xUnit 测试项目 + 补全 DiagnosticLog 实体字段 | 低 | Task 7-12 |
-| **14** | 诊断引擎单元测试 (3个测试) | 中 | Task 13 |
-| **15** | AI Agent 单元测试 (6个测试: Registry + Service) | 中 | Task 13 |
-| **16** | 科技风改造诊断面板 + AI 问答页 | 中 | Task 10, 12 |
 | **17** | 集成测试 + 最终验证 (预留给 Claude Code 做) | — | 全部 |
 
 ### 可并行的任务组
