@@ -1,3 +1,5 @@
+using System.Threading.Channels;
+using GB28181Platform.Api.BackgroundServices;
 using GB28181Platform.Api.Hubs;
 using GB28181Platform.Domain.Entities;
 using GB28181Platform.Domain.Enums;
@@ -17,6 +19,7 @@ public class DeviceMonitorService : BackgroundService
     private readonly SipServerOptions _options;
     private readonly ISqlSugarClient _db;
     private readonly IHubContext<DeviceStatusHub> _hubContext;
+    private readonly Channel<DiagnosticRequest> _diagnosticQueue;
     private readonly ILogger<DeviceMonitorService> _logger;
 
     public DeviceMonitorService(
@@ -24,12 +27,14 @@ public class DeviceMonitorService : BackgroundService
         SipServerOptions options,
         ISqlSugarClient db,
         IHubContext<DeviceStatusHub> hubContext,
+        Channel<DiagnosticRequest> diagnosticQueue,
         ILogger<DeviceMonitorService> logger)
     {
         _sessionManager = sessionManager;
         _options = options;
         _db = db;
         _hubContext = hubContext;
+        _diagnosticQueue = diagnosticQueue;
         _logger = logger;
     }
 
@@ -63,7 +68,19 @@ public class DeviceMonitorService : BackgroundService
                         await _hubContext.Clients.All.SendAsync("DeviceStatusChanged",
                             session.DeviceId, "Offline", stoppingToken);
 
-                        // TODO: 触发自动诊断
+                        // 自动触发诊断
+                        var diagTask = new DiagnosticTask
+                        {
+                            DeviceId = session.DeviceId,
+                            TriggerType = "AUTO",
+                            Status = "PENDING"
+                        };
+                        diagTask.Id = await _db.Insertable(diagTask).ExecuteReturnIdentityAsync();
+                        await _diagnosticQueue.Writer.WriteAsync(
+                            new DiagnosticRequest { TaskId = diagTask.Id, DeviceId = session.DeviceId },
+                            stoppingToken);
+                        _logger.LogInformation("已为离线设备 {DeviceId} 创建自动诊断任务 {TaskId}",
+                            session.DeviceId, diagTask.Id);
                     }
                 }
             }

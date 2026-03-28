@@ -1,6 +1,10 @@
+using System.Threading.Channels;
 using GB28181Platform.Api.BackgroundServices;
 using GB28181Platform.Api.Hubs;
 using GB28181Platform.Application.Streams;
+using GB28181Platform.Diagnostic.Browser;
+using GB28181Platform.Diagnostic.Engine;
+using GB28181Platform.Diagnostic.Steps;
 using GB28181Platform.Infrastructure;
 using GB28181Platform.Sip;
 using GB28181Platform.Sip.Handlers;
@@ -54,6 +58,17 @@ builder.Services.AddHostedService<DeviceMonitorService>();
 // Stream Services
 builder.Services.AddSingleton<InviteHandler>();
 builder.Services.AddScoped<IStreamAppService, StreamAppService>();
+
+// Diagnostic Engine
+builder.Services.AddScoped<IDiagnosticEngine, DiagnosticEngine>();
+builder.Services.AddScoped<IDiagnosticStep, PingCheckStep>();
+builder.Services.AddScoped<IDiagnosticStep, PortCheckStep>();
+builder.Services.AddScoped<IDiagnosticStep, BrowserCheckStep>();
+builder.Services.AddSingleton<CameraBrowserAgent>();
+
+// Diagnostic Task Queue
+builder.Services.AddSingleton(Channel.CreateUnbounded<DiagnosticRequest>());
+builder.Services.AddHostedService<DiagnosticWorkerService>();
 
 var app = builder.Build();
 

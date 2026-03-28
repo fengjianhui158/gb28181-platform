@@ -1,3 +1,5 @@
+using System.Threading.Channels;
+using GB28181Platform.Api.BackgroundServices;
 using GB28181Platform.Domain.Common;
 using GB28181Platform.Domain.Entities;
 using Microsoft.AspNetCore.Mvc;
@@ -10,10 +12,12 @@ namespace GB28181Platform.Api.Controllers;
 public class DiagnosticController : ControllerBase
 {
     private readonly ISqlSugarClient _db;
+    private readonly Channel<DiagnosticRequest> _queue;
 
-    public DiagnosticController(ISqlSugarClient db)
+    public DiagnosticController(ISqlSugarClient db, Channel<DiagnosticRequest> queue)
     {
         _db = db;
+        _queue = queue;
     }
 
     /// <summary>
@@ -76,7 +80,8 @@ public class DiagnosticController : ControllerBase
         };
         task.Id = await _db.Insertable(task).ExecuteReturnIdentityAsync();
 
-        // TODO: 将任务放入诊断引擎队列执行
+        // 放入诊断引擎队列执行
+        await _queue.Writer.WriteAsync(new DiagnosticRequest { TaskId = task.Id, DeviceId = deviceId });
 
         return ApiResponse<DiagnosticTask>.Ok(task);
     }
