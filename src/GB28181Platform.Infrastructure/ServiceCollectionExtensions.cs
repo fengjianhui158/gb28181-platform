@@ -1,4 +1,5 @@
 using GB28181Platform.Infrastructure.Database;
+using GB28181Platform.Infrastructure.MediaServer;
 using Microsoft.Extensions.DependencyInjection;
 using SqlSugar;
 
@@ -14,6 +15,9 @@ public static class ServiceCollectionExtensions
 
         // 启动时自动建表
         DbContext.InitDatabase(db);
+
+        // 注册 ZLMediaKit 客户端
+        services.AddSingleton<IZlmClient, ZlmClient>();
 
         return services;
     }
