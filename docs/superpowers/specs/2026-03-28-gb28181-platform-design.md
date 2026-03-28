@@ -39,12 +39,12 @@
 
 | 组件 | 技术 | 说明 |
 |------|------|------|
-| 后端 | C# .NET 9 (ASP.NET Core) | 统一后端语言 |
+| 后端 | C# .NET 8 LTS (ASP.NET Core) | 统一后端语言，LTS 长期支持到 2026.11 |
 | 前端 | Vue 3 + Element Plus + TypeScript | 国内主流方案 |
 | SIP 库 | sipsorcery 10.0.3 | 纯 C# SIP 库，支持 UAC/UAS |
 | 流媒体 | ZLMediaKit | GB28181 RTP→WebRTC，业界最成熟 |
 | 数据库 | MySQL + SqlSugar ORM | CodeFirst 自动建表 |
-| 缓存 | Redis | 设备在线状态、事件发布 |
+| 缓存 | Redis 5.0.14 (Windows x64) | 设备在线状态、事件发布 |
 | 大模型 | 公司自建 Qwen 3.5 | OpenAI 兼容 API，Function Calling |
 | 浏览器自动化 | Playwright (Headless Chromium) | Agent Browser 访问摄像机网页 |
 | 实时推送 | SignalR | 设备状态变更推送 |
@@ -478,3 +478,27 @@ Function Calling 定义:
 - Axios HTTP 客户端
 - Vite 构建工具
 - SignalR 客户端 (实时推送)
+
+### 7.3 UI 设计风格：科技风
+
+**整体基调**:
+- 深色背景 (#0a0e1a ~ #1a1f36)，荧光蓝/青色主色调 (#00d4ff / #00f0ff)
+- 辅助色：荧光绿 (#00ff88) 表示在线，荧光红 (#ff4444) 表示离线/告警
+
+**视觉元素**:
+- 卡片带微光边框 (1px rgba glow border)
+- 数字/状态使用等宽字体 (JetBrains Mono / Source Code Pro)
+- 设备数量、在线率等关键指标用大号数字展示
+- 状态指示灯带呼吸动画 (pulse animation)
+
+**布局风格**:
+- 左侧深色导航栏，顶部状态概览条
+- 设备列表页：表格行 hover 带微光效果
+- 诊断面板：时间线样式展示诊断步骤
+- AI 问答：类终端/Chat 风格，消息带打字机效果
+
+**Element Plus 定制**:
+- 覆盖 Element Plus CSS 变量实现暗色主题
+- `--el-color-primary: #00d4ff`
+- `--el-bg-color: #0f1423`
+- `--el-text-color-primary: #e0e6ed`

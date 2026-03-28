@@ -1,6 +1,6 @@
 # GB28181 智能视频管理平台
 
-基于 .NET 9 + Vue 3 + ZLMediaKit 的 GB28181 视频监控管理平台，支持设备注册、实时预览、离线智能诊断和 AI 问答。
+基于 .NET 8 + Vue 3 + ZLMediaKit 的 GB28181 视频监控管理平台，支持设备注册、实时预览、离线智能诊断和 AI 问答。
 
 ## 功能特性
 
@@ -14,7 +14,7 @@
 
 | 层 | 技术 |
 |---|------|
-| 后端 | C# .NET 9 / ASP.NET Core / SignalR |
+| 后端 | C# .NET 8 / ASP.NET Core / SignalR |
 | 前端 | Vue 3 / Element Plus / TypeScript / Vite |
 | SIP | sipsorcery (UAS/UAC) |
 | 流媒体 | ZLMediaKit (RTP → WebRTC/RTSP/FLV/HLS) |
