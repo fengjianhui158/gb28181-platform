@@ -1,0 +1,129 @@
+/* === GB28181 科技风主题 === */
+:root {
+  /* 主色调 */
+  --tech-primary: #00d4ff;
+  --tech-primary-light: #00f0ff;
+  --tech-accent: #7b61ff;
+
+  /* 状态色 */
+  --tech-online: #00ff88;
+  --tech-offline: #ff4444;
+  --tech-warning: #ffaa00;
+
+  /* 背景层次 */
+  --tech-bg-deep: #060a14;
+  --tech-bg-base: #0a0e1a;
+  --tech-bg-card: #111827;
+  --tech-bg-elevated: #1a1f36;
+  --tech-bg-hover: #1e2642;
+
+  /* 文字 */
+  --tech-text-primary: #e0e6ed;
+  --tech-text-secondary: #8892a4;
+  --tech-text-muted: #4a5568;
+
+  /* 边框 */
+  --tech-border: rgba(0, 212, 255, 0.15);
+  --tech-border-glow: rgba(0, 212, 255, 0.4);
+
+  /* Element Plus 覆盖 */
+  --el-color-primary: #00d4ff;
+  --el-color-primary-light-3: #33ddff;
+  --el-color-primary-light-5: #66e6ff;
+  --el-color-primary-light-7: #99eeff;
+  --el-color-primary-light-9: #ccf7ff;
+  --el-color-primary-dark-2: #00a8cc;
+  --el-bg-color: #0a0e1a;
+  --el-bg-color-overlay: #111827;
+  --el-bg-color-page: #060a14;
+  --el-text-color-primary: #e0e6ed;
+  --el-text-color-regular: #8892a4;
+  --el-border-color: rgba(0, 212, 255, 0.15);
+  --el-border-color-light: rgba(0, 212, 255, 0.1);
+  --el-fill-color-blank: #111827;
+  --el-mask-color: rgba(6, 10, 20, 0.8);
+}
+
+/* 全局样式 */
+body {
+  background: var(--tech-bg-deep);
+  color: var(--tech-text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* 等宽数字字体 */
+.tech-mono {
+  font-family: 'JetBrains Mono', 'Source Code Pro', 'Consolas', monospace;
+}
+
+/* 科技风卡片 */
+.tech-card {
+  background: var(--tech-bg-card);
+  border: 1px solid var(--tech-border);
+  border-radius: 8px;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.tech-card:hover {
+  border-color: var(--tech-border-glow);
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.1);
+}
+
+/* 状态指示灯 */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot--online {
+  background: var(--tech-online);
+  box-shadow: 0 0 8px var(--tech-online);
+  animation: pulse 2s infinite;
+}
+
+.status-dot--offline {
+  background: var(--tech-offline);
+  box-shadow: 0 0 8px var(--tech-offline);
+}
+
+/* 大号数字指标 */
+.tech-metric {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--tech-primary);
+  text-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+}
+
+/* 微光表格行 */
+.el-table {
+  --el-table-bg-color: var(--tech-bg-card);
+  --el-table-tr-bg-color: var(--tech-bg-card);
+  --el-table-header-bg-color: var(--tech-bg-elevated);
+  --el-table-row-hover-bg-color: var(--tech-bg-hover);
+  --el-table-border-color: var(--tech-border);
+  --el-table-text-color: var(--tech-text-primary);
+  --el-table-header-text-color: var(--tech-text-secondary);
+}
+
+/* Element Plus 按钮覆盖 */
+.el-button--primary {
+  --el-button-bg-color: transparent;
+  --el-button-border-color: var(--tech-primary);
+  --el-button-text-color: var(--tech-primary);
+  --el-button-hover-bg-color: rgba(0, 212, 255, 0.1);
+  --el-button-hover-border-color: var(--tech-primary-light);
+  --el-button-hover-text-color: var(--tech-primary-light);
+}
+
+/* 输入框 */
+.el-input__wrapper {
+  background-color: var(--tech-bg-card) !important;
+  box-shadow: 0 0 0 1px var(--tech-border) inset !important;
+}
+
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--tech-border-glow) inset !important;
+}

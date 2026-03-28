@@ -1,13 +1,14 @@
 <template>
   <el-container style="height: 100vh">
-    <el-aside width="200px" style="background: #304156">
+    <el-aside width="200px" class="tech-sidebar">
       <div class="logo">GB28181 平台</div>
       <el-menu
         :default-active="route.path"
         router
-        background-color="#304156"
-        text-color="#bfcbd9"
-        active-text-color="#409eff"
+        class="tech-menu"
+        background-color="transparent"
+        text-color="var(--tech-text-secondary)"
+        active-text-color="var(--tech-primary)"
       >
         <el-menu-item index="/devices">
           <el-icon><Monitor /></el-icon>
@@ -28,7 +29,7 @@
       </el-menu>
     </el-aside>
 
-    <el-main style="background: #f0f2f5; padding: 20px">
+    <el-main class="tech-main">
       <router-view />
     </el-main>
   </el-container>
@@ -39,18 +40,54 @@ import { useRoute } from 'vue-router'
 const route = useRoute()
 </script>
 
-<style>
+<style scoped>
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
+
+.tech-sidebar {
+  background: var(--tech-bg-elevated);
+  border-right: 1px solid var(--tech-border);
+}
+
 .logo {
   height: 60px;
   line-height: 60px;
   text-align: center;
-  color: white;
+  color: var(--tech-primary);
   font-size: 18px;
   font-weight: bold;
-  border-bottom: 1px solid #3a4a5c;
+  border-bottom: 1px solid var(--tech-border);
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+}
+
+.tech-menu {
+  border-right: none;
+}
+
+.tech-menu ::v-deep(.el-menu-item) {
+  border-left: 3px solid transparent;
+  transition: all 0.3s ease;
+}
+
+.tech-menu ::v-deep(.el-menu-item:hover) {
+  border-left-color: var(--tech-primary);
+  background-color: var(--tech-bg-hover) !important;
+}
+
+.tech-menu ::v-deep(.el-menu-item.is-active) {
+  background-color: var(--tech-bg-hover) !important;
+  border-left-color: var(--tech-primary);
+  box-shadow: inset -4px 0 8px rgba(0, 212, 255, 0.1);
+}
+
+.tech-menu ::v-deep(.el-icon) {
+  margin-right: 8px;
+}
+
+.tech-main {
+  background: var(--tech-bg-base);
+  padding: 20px;
 }
 </style>
