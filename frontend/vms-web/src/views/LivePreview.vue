@@ -171,7 +171,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  videoSlots.forEach((slot, idx) => {
+  videoSlots.forEach((slot, _idx) => {
     if (slot.pc) {
       slot.pc.close()
       slot.pc = null
