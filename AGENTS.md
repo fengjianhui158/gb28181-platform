@@ -1,28 +1,27 @@
-# AI Agent Instructions
+# AI 助手协作指南
 
-> For Codex, Kiro, Cursor, and other AI assistants.
-> Full context is in `CLAUDE.md` (same directory). Read it first.
+> 适用于 Codex、Kiro、Cursor 及其他 AI 助手。
+> 完整项目上下文在 `CLAUDE.md`（同目录），请先阅读。
 
-## Quick Start for New Agent
+## 新助手快速上手
 
-1. **Read `CLAUDE.md`** — project overview, tech stack, structure, current progress
-2. **Read `docs/superpowers/plans/2026-03-28-gb28181-platform.md`** — complete implementation plan with code for all tasks
-3. **Check `git log --oneline -10`** — see which tasks are already committed
-4. **Pick up the next uncompleted task** and follow the plan exactly
+1. **阅读 `CLAUDE.md`** — 项目概述、技术栈、目录结构、当前进度
+2. **阅读 `docs/superpowers/plans/2026-03-28-gb28181-platform.md`** — 17 个 Task 的完整实施计划（含所有代码）
+3. **执行 `git log --oneline -10`** — 查看哪些 Task 已通过 commit 完成
+4. **从下一个未完成的 Task 开始执行**，严格按计划实现
 
-## Task Execution Checklist
+## 每个 Task 执行清单
 
-For each task:
-- [ ] Read the task section from the plan file
-- [ ] Implement exactly as specified (code is provided)
-- [ ] Run `dotnet build GB28181Platform.sln` to verify (backend tasks)
-- [ ] Commit with the message specified in the plan
-- [ ] Move to next task
+- [ ] 从计划文件中阅读对应 Task 的完整内容
+- [ ] 按计划中的代码精确实现（代码已提供，不要自由发挥）
+- [ ] 后端任务执行 `dotnet build GB28181Platform.sln` 验证编译通过
+- [ ] 使用计划中指定的 commit message 提交
+- [ ] 继续下一个 Task
 
-## Working Directory
+## 工作目录
 
 `d:/Project/RailTransit/轨道交通_智慧城市/SPI/02 源码/branches/fengjianhui/VMS/Platform/newvmsplat`
 
-## Solution File
+## 解决方案文件
 
-`GB28181Platform.sln` (7 projects + 1 test project to be created)
+`GB28181Platform.sln`（7 个项目 + 1 个待创建的测试项目）
