@@ -1,7 +1,9 @@
 using GB28181Platform.Api.BackgroundServices;
 using GB28181Platform.Api.Hubs;
+using GB28181Platform.Application.Streams;
 using GB28181Platform.Infrastructure;
 using GB28181Platform.Sip;
+using GB28181Platform.Sip.Handlers;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -48,6 +50,10 @@ builder.Services.AddGb28181Sip(options =>
 // Background Services
 builder.Services.AddHostedService<SipServerHostedService>();
 builder.Services.AddHostedService<DeviceMonitorService>();
+
+// Stream Services
+builder.Services.AddSingleton<InviteHandler>();
+builder.Services.AddScoped<IStreamAppService, StreamAppService>();
 
 var app = builder.Build();
 

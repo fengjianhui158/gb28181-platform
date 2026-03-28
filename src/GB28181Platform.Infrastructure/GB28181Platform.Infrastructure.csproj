@@ -2,7 +2,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\GB28181Platform.Domain\GB28181Platform.Domain.csproj" />
-    <ProjectReference Include="..\GB28181Platform.Application\GB28181Platform.Application.csproj" />
   </ItemGroup>
 
   <ItemGroup>
