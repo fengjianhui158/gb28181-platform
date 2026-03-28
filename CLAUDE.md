@@ -101,8 +101,9 @@ tests/GB28181Platform.Tests/         # xUnit + NSubstitute 单元测试（待创
 
 - 后端：C# 文件级 namespace、nullable 启用、async/await
 - 前端：Vue 3 `<script setup lang="ts">`、使用 stores/ 目录的 Pinia store
+- **每个 Task 完成后必须 commit**，commit message 已在计划文件中写好，直接使用
+- 后端任务 commit 前必须 `dotnet build GB28181Platform.sln` 编译验证通过
 - commit 格式：`feat(scope): description` / `test(scope): description`
-- 每个 Task 完成后必须 `dotnet build` 编译验证再 commit
 
 ### 前端开发
 
