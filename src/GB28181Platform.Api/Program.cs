@@ -1,4 +1,6 @@
 using System.Threading.Channels;
+using GB28181Platform.AiAgent;
+using GB28181Platform.AiAgent.Functions;
 using GB28181Platform.Api.BackgroundServices;
 using GB28181Platform.Api.Hubs;
 using GB28181Platform.Application.Streams;
@@ -69,6 +71,14 @@ builder.Services.AddSingleton<CameraBrowserAgent>();
 // Diagnostic Task Queue
 builder.Services.AddSingleton(Channel.CreateUnbounded<DiagnosticRequest>());
 builder.Services.AddHostedService<DiagnosticWorkerService>();
+
+// AI Agent
+builder.Services.AddSingleton<IQwenClient, QwenClient>();
+builder.Services.AddScoped<IAgentFunction, GetDeviceStatusFunction>();
+builder.Services.AddScoped<IAgentFunction, GetDiagnosticLogsFunction>();
+builder.Services.AddScoped<IAgentFunction, ListOfflineDevicesFunction>();
+builder.Services.AddScoped<FunctionRegistry>();
+builder.Services.AddScoped<IAiAgentService, AiAgentService>();
 
 var app = builder.Build();
 

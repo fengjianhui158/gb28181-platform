@@ -1,3 +1,4 @@
+using GB28181Platform.AiAgent;
 using GB28181Platform.Domain.Common;
 using Microsoft.AspNetCore.Mvc;
 
@@ -7,10 +8,12 @@ namespace GB28181Platform.Api.Controllers;
 [Route("api/[controller]")]
 public class AiAgentController : ControllerBase
 {
+    private readonly IAiAgentService _aiAgent;
     private readonly ILogger<AiAgentController> _logger;
 
-    public AiAgentController(ILogger<AiAgentController> logger)
+    public AiAgentController(IAiAgentService aiAgent, ILogger<AiAgentController> logger)
     {
+        _aiAgent = aiAgent;
         _logger = logger;
     }
 
@@ -20,14 +23,16 @@ public class AiAgentController : ControllerBase
     [HttpPost("chat")]
     public async Task<ApiResponse<ChatResponse>> Chat([FromBody] ChatRequest request)
     {
-        // TODO: Phase 4 实现 — 集成 Qwen Function Calling
+        var sessionId = request.SessionId ?? Guid.NewGuid().ToString("N");
         _logger.LogInformation("AI 问答: SessionId={SessionId}, Message={Message}",
-            request.SessionId, request.Message);
+            sessionId, request.Message);
+
+        var reply = await _aiAgent.ChatAsync(sessionId, request.Message, request.DeviceId);
 
         return ApiResponse<ChatResponse>.Ok(new ChatResponse
         {
-            SessionId = request.SessionId ?? Guid.NewGuid().ToString("N"),
-            Reply = "AI Agent 功能将在 Phase 4 实现。"
+            SessionId = sessionId,
+            Reply = reply
         });
     }
 }
@@ -35,6 +40,7 @@ public class AiAgentController : ControllerBase
 public class ChatRequest
 {
     public string? SessionId { get; set; }
+    public string? DeviceId { get; set; }
     public string Message { get; set; } = string.Empty;
 }
 
