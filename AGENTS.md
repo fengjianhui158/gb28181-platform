@@ -14,9 +14,8 @@
 ## Token 管理
 
 - **开始新 Task 前先评估剩余 token 是否够用**（含实现 + 编译验证 + commit）
-- 如果不够，停止并提示用户："剩余 token 不足以完成 Task N，建议新开会话继续"
-- 不要硬撑导致 Task 做一半中断
-- 万一中断了，提交 WIP commit：`git commit -m "wip(scope): partial implementation of Task N"`
+- 如果不够，**不要开始**，提示用户："剩余 token 不足以完成 Task N，建议新开会话继续"
+- 原则：要么完整做完一个 Task，要么不做。避免半成品交给下一个会话
 
 ## 每个 Task 执行清单
 
