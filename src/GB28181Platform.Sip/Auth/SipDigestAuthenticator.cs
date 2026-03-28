@@ -48,6 +48,6 @@ public class SipDigestAuthenticator
     private static string Md5Hash(string input)
     {
         var bytes = MD5.HashData(Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexStringLower(bytes);
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 }
