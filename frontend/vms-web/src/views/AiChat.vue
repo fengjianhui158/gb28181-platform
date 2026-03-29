@@ -59,16 +59,16 @@ const loading = ref(false)
 const sessionId = ref('')
 const messagesRef = ref<HTMLElement>()
 
-function typewriterEffect(text: string, msg: Message) {
+function typewriterEffect(text: string, index: number) {
   let i = 0
-  msg.typing = true
-  msg.content = ''
+  messages.value[index].typing = true
+  messages.value[index].content = ''
   const interval = setInterval(() => {
-    msg.content = text.slice(0, ++i)
+    messages.value[index].content = text.slice(0, ++i)
     scrollToBottom()
     if (i >= text.length) {
       clearInterval(interval)
-      msg.typing = false
+      messages.value[index].typing = false
     }
   }, 20)
 }
@@ -95,11 +95,16 @@ async function sendMessage() {
 
   try {
     const res: any = await chat(text, sessionId.value)
-    sessionId.value = res.data?.sessionId || sessionId.value
-    const reply = res.data?.reply || '暂无回复'
+    console.log('AI response:', JSON.stringify(res))
+    // axios 拦截器已解包 response.data，res = { code, data: { sessionId, reply } }
+    // 兼容两种情况
+    const data = res.data || res
+    sessionId.value = data.sessionId || data.data?.sessionId || sessionId.value
+    const reply = data.reply || data.data?.reply || res.reply || '暂无回复'
+    console.log('Extracted reply:', reply)
     const msg: Message = { role: 'assistant', content: '', typing: true }
     messages.value.push(msg)
-    typewriterEffect(reply, msg)
+    typewriterEffect(reply, messages.value.length - 1)
   } catch {
     messages.value.push({ role: 'assistant', content: '请求失败，请稍后重试' })
   } finally {

@@ -59,6 +59,7 @@
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { getDevices } from '../api/device'
 import { playStream, stopStream } from '../api/stream'
+import { unwrapApiPayload, unwrapArrayPayload } from '../utils/apiPayload.js'
 
 interface VideoSlot {
   playing: boolean
@@ -84,7 +85,7 @@ function setVideoRef(idx: number, el: HTMLVideoElement) {
 async function fetchDevices() {
   try {
     const res = await getDevices()
-    devices.value = res.data || []
+    devices.value = unwrapArrayPayload(res)
   } catch {
     devices.value = []
   }
@@ -126,7 +127,7 @@ async function handlePlay(deviceId: string, channelId: string) {
 
   try {
     const res = await playStream(deviceId, channelId)
-    const data = res.data
+    const data = unwrapApiPayload(res)
     if (!data.success) {
       alert(data.message || '拉流失败')
       return

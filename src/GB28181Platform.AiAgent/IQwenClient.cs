@@ -11,6 +11,7 @@ public class ChatMessage
     public string? Content { get; set; }
     public string? Name { get; set; }
     public FunctionCall? FunctionCall { get; set; }
+    public string? ToolCallId { get; set; }
 }
 
 public class FunctionCall
@@ -31,4 +32,5 @@ public class ChatResponse
     public string? Content { get; set; }
     public FunctionCall? FunctionCall { get; set; }
     public string FinishReason { get; set; } = "";
+    public string? ToolCallId { get; set; }
 }

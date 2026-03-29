@@ -81,6 +81,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getDiagnosticTasks, getDiagnosticTask, runDiagnostic } from '../api/diagnostic'
+import { unwrapApiPayload, unwrapArrayPayload } from '../utils/apiPayload.js'
 
 const route = useRoute()
 const deviceId = ref(route.query.deviceId as string || '')
@@ -93,7 +94,7 @@ async function loadTasks() {
   loading.value = true
   try {
     const res: any = await getDiagnosticTasks(deviceId.value || undefined)
-    tasks.value = res.data || []
+    tasks.value = unwrapArrayPayload(res)
   } finally {
     loading.value = false
   }
@@ -113,7 +114,7 @@ async function runManualDiag() {
 
 async function viewDetail(taskId: number) {
   const res: any = await getDiagnosticTask(taskId)
-  detail.value = res.data
+  detail.value = unwrapApiPayload(res)
 }
 
 onMounted(() => loadTasks())

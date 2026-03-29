@@ -49,8 +49,10 @@ public class AiAgentService : IAiAgentService
                     ? await function.ExecuteAsync(response.FunctionCall.Arguments)
                     : $"未知函数: {response.FunctionCall.Name}";
 
-                messages.Add(new() { Role = "assistant", FunctionCall = response.FunctionCall });
-                messages.Add(new() { Role = "function", Name = response.FunctionCall.Name, Content = result });
+                // assistant 消息需要包含 tool_calls（新版格式要求）
+                messages.Add(new() { Role = "assistant", Content = null, FunctionCall = response.FunctionCall, ToolCallId = response.ToolCallId });
+                // 用 tool 角色回传结果，Name 存 tool_call_id
+                messages.Add(new() { Role = "tool", Name = response.ToolCallId ?? response.FunctionCall.Name, Content = result });
             }
             else
             {
