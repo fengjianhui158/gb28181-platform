@@ -79,29 +79,89 @@ public class CameraBrowserAgent
     {
         try
         {
-            // 常见的登录表单选择器
-            var usernameSelectors = new[] { "input[name='username']", "input[name='user']", "input[name='loginName']", "#username", "#user" };
-            var passwordSelectors = new[] { "input[name='password']", "input[name='pass']", "input[name='loginPass']", "#password", "#pass" };
-            var submitSelectors = new[] { "button[type='submit']", "input[type='submit']", ".login-btn", "#loginBtn", "button.btn-login" };
+            // 获取页面所有可见的 input 元素
+            var allInputs = await page.QuerySelectorAllAsync("input:visible");
+            _logger.LogInformation("登录页找到 {Count} 个可见 input 元素", allInputs.Count);
 
-            foreach (var sel in usernameSelectors)
+            IElementHandle? usernameInput = null;
+            IElementHandle? passwordInput = null;
+
+            foreach (var input in allInputs)
             {
-                var el = await page.QuerySelectorAsync(sel);
-                if (el != null) { await el.FillAsync(username); break; }
+                var type = (await input.GetAttributeAsync("type") ?? "text").ToLower();
+                var name = (await input.GetAttributeAsync("name") ?? "").ToLower();
+                var id = (await input.GetAttributeAsync("id") ?? "").ToLower();
+                var placeholder = (await input.GetAttributeAsync("placeholder") ?? "").ToLower();
+
+                _logger.LogDebug("  input: type={Type}, name={Name}, id={Id}, placeholder={Placeholder}", type, name, id, placeholder);
+
+                if (type == "password")
+                {
+                    passwordInput = input;
+                }
+                else if (type == "text" || type == "email" || type == "")
+                {
+                    // 通过 name/id/placeholder 判断是否是用户名
+                    var combined = $"{name} {id} {placeholder}";
+                    if (combined.Contains("user") || combined.Contains("login") || combined.Contains("name") ||
+                        combined.Contains("账号") || combined.Contains("用户"))
+                    {
+                        usernameInput = input;
+                    }
+                    else if (usernameInput == null)
+                    {
+                        // 如果没找到明确的用户名框，取第一个 text input 作为用户名
+                        usernameInput = input;
+                    }
+                }
             }
-            foreach (var sel in passwordSelectors)
+
+            if (usernameInput != null)
             {
-                var el = await page.QuerySelectorAsync(sel);
-                if (el != null) { await el.FillAsync(password); break; }
+                await usernameInput.FillAsync(username);
+                _logger.LogInformation("已填入用户名");
             }
-            foreach (var sel in submitSelectors)
+            else
             {
-                var el = await page.QuerySelectorAsync(sel);
-                if (el != null) { await el.ClickAsync(); break; }
+                _logger.LogWarning("未找到用户名输入框");
+            }
+
+            if (passwordInput != null)
+            {
+                await passwordInput.FillAsync(password);
+                _logger.LogInformation("已填入密码");
+            }
+            else
+            {
+                _logger.LogWarning("未找到密码输入框");
+            }
+
+            // 查找提交按钮：button、input[type=submit]、或包含"登录/Login"文字的按钮
+            var submitBtn = await page.QuerySelectorAsync("button[type='submit']")
+                ?? await page.QuerySelectorAsync("input[type='submit']")
+                ?? await page.QuerySelectorAsync("button:has-text('登录')")
+                ?? await page.QuerySelectorAsync("button:has-text('Login')")
+                ?? await page.QuerySelectorAsync("button:has-text('login')")
+                ?? await page.QuerySelectorAsync("a:has-text('登录')")
+                ?? await page.QuerySelectorAsync(".login-btn")
+                ?? await page.QuerySelectorAsync("#loginBtn");
+
+            if (submitBtn != null)
+            {
+                await submitBtn.ClickAsync();
+                _logger.LogInformation("已点击登录按钮");
+            }
+            else
+            {
+                // 没找到按钮，尝试回车提交
+                if (passwordInput != null)
+                    await passwordInput.PressAsync("Enter");
+                _logger.LogWarning("未找到登录按钮，尝试回车提交");
             }
 
             await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-            _logger.LogInformation("登录操作完成");
+            await Task.Delay(2000); // 等待页面跳转
+            _logger.LogInformation("登录操作完成，当前 URL: {Url}", page.Url);
         }
         catch (Exception ex)
         {
