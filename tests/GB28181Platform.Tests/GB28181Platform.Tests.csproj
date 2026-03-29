@@ -16,9 +16,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\GB28181Platform.Application\GB28181Platform.Application.csproj" />
     <ProjectReference Include="..\..\src\GB28181Platform.Domain\GB28181Platform.Domain.csproj" />
     <ProjectReference Include="..\..\src\GB28181Platform.Diagnostic\GB28181Platform.Diagnostic.csproj" />
     <ProjectReference Include="..\..\src\GB28181Platform.AiAgent\GB28181Platform.AiAgent.csproj" />
+    <ProjectReference Include="..\..\src\GB28181Platform.Infrastructure\GB28181Platform.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

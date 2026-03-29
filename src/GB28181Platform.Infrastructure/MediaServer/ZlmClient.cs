@@ -18,7 +18,7 @@ public class ZlmClient : IZlmClient
 
     public async Task<OpenRtpResult?> OpenRtpServerAsync(string streamId, int? port = null)
     {
-        var url = $"/index/api/openRtpServer?secret={_secret}&stream_id={streamId}&port={port ?? 0}&enable_tcp=1";
+        var url = BuildOpenRtpServerUrl(_secret, streamId, port);
         var resp = await _http.GetFromJsonAsync<OpenRtpResult>(url);
         return resp;
     }
@@ -47,6 +47,11 @@ public class ZlmClient : IZlmClient
     public string GetWebRtcPlayUrl(string app, string streamId)
     {
         return $"{_baseUrl}/index/api/webrtc?app={app}&stream={streamId}&type=play";
+    }
+
+    internal static string BuildOpenRtpServerUrl(string secret, string streamId, int? port = null)
+    {
+        return $"/index/api/openRtpServer?secret={secret}&stream_id={streamId}&port={port ?? 0}&enable_tcp=0";
     }
 }
 
