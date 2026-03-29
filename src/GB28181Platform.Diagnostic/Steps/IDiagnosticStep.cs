@@ -16,6 +16,7 @@ public class DiagnosticContext
     public int WebPort { get; set; } = 80;
     public string? WebUsername { get; set; }
     public string? WebPassword { get; set; }
+    public string? Manufacturer { get; set; }
     public int TaskId { get; set; }
     public bool ShouldContinue { get; set; } = true;
 }

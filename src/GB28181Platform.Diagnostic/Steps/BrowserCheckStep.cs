@@ -36,7 +36,7 @@ public class BrowserCheckStep : IDiagnosticStep
                 expectedSipIp, expectedServerId),
             _ => await _agent.CheckCameraConfigByAiDomAsync(
                 context.IpAddress, context.WebPort, context.WebUsername, context.WebPassword,
-                expectedSipIp, expectedServerId),
+                expectedSipIp, expectedServerId, context.Manufacturer),
         };
 
         sw.Stop();

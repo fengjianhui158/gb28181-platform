@@ -45,6 +45,7 @@ public class DiagnosticEngine : IDiagnosticEngine
             WebPort = device.WebPort > 0 ? device.WebPort : 80,
             WebUsername = device.WebUsername,
             WebPassword = device.WebPassword,
+            Manufacturer = device.Manufacturer,
             TaskId = taskId
         };
 

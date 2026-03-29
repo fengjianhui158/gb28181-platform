@@ -39,7 +39,7 @@ public class CameraBrowserAgent
     /// </summary>
     public async Task<BrowserCheckResult> CheckCameraConfigByAiDomAsync(
         string ip, int port, string? username, string? password,
-        string expectedSipServerIp, string expectedServerId)
+        string expectedSipServerIp, string expectedServerId, string? manufacturer = null)
     {
         IPlaywright? pw = null;
         IBrowser? browser = null;
@@ -86,49 +86,50 @@ public class CameraBrowserAgent
                 }
             }
 
-            // 第二步：AI 辅助导航到国标配置页
-            // 大华等摄像机登录后通过 JS/iframe 动态加载，需要多等一会
+            // 第二步：导航到国标配置页
+            // 优先用厂商配置路径，没有则 AI 自动分析
             await Task.Delay(3000);
 
-            // 获取完整页面内容（包括 iframe 内容和所有可点击元素）
-            var menuHtml = await page.EvaluateAsync<string>(@"() => {
-                // 先尝试获取所有 a 标签和可点击元素的文本
-                const links = document.querySelectorAll('a, span[onclick], div[onclick], li[onclick], td[onclick], [class*=menu], [class*=tree], [class*=nav]');
-                const items = [];
-                links.forEach(el => {
-                    const text = (el.textContent || '').trim();
-                    if (text && text.length < 50) {
-                        const id = el.id ? '#' + el.id : '';
-                        const cls = el.className ? '.' + el.className.split(' ')[0] : '';
-                        const tag = el.tagName.toLowerCase();
-                        items.push(tag + id + cls + ' => ' + text);
-                    }
-                });
-                // 也获取 iframe 列表
-                const iframes = document.querySelectorAll('iframe');
-                iframes.forEach((f, i) => items.push('iframe[' + i + '] src=' + f.src));
-                return items.join('\n').substring(0, 5000);
-            }");
+            var mfr = (manufacturer ?? "").ToLower();
+            var navPath = _config[$"Diagnostic:NavPaths:{mfr}"];
 
-            _logger.LogInformation("页面菜单/链接信息长度: {Len}", menuHtml?.Length ?? 0);
-
-            if (!string.IsNullOrEmpty(menuHtml))
+            // 如果精确匹配不到，模糊匹配
+            if (string.IsNullOrEmpty(navPath) && !string.IsNullOrEmpty(manufacturer))
             {
-                var navPrompt = $@"以下是摄像机管理页面中所有可点击的菜单项和链接（格式：元素选择器 => 文本内容）：
+                var paths = _config.GetSection("Diagnostic:NavPaths").GetChildren();
+                foreach (var p in paths)
+                {
+                    if (mfr.Contains(p.Key.ToLower()) || p.Key.ToLower().Contains(mfr))
+                    {
+                        navPath = p.Value;
+                        break;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(navPath))
+            {
+                _logger.LogInformation("使用配置路径导航: {Path}", navPath);
+                await NavigateByPathAsync(page, navPath);
+            }
+            else
+            {
+                _logger.LogInformation("无配置路径，使用 AI 自动导航");
+                var menuHtml = await GetPageLinksAsync(page);
+                if (!string.IsNullOrEmpty(menuHtml))
+                {
+                    var navPrompt = $@"以下是摄像机管理页面中所有可点击的菜单项：
 {menuHtml[..Math.Min(4000, menuHtml.Length)]}
 
-请找到与 GB28181、国标、SIP、平台接入、网络配置 相关的菜单项。
-大华摄像机通常在 网络设置 > 平台接入 或 网络 > GB28181 下。
-如果需要多级导航（先点一级菜单再点二级），返回数组。只返回 JSON：
-[{{""selector"": ""CSS选择器"", ""description"": ""说明""}}]
-如果找不到，返回空数组 []";
+请找到与 GB28181、国标、SIP、平台接入相关的菜单项。只返回 JSON：
+[{{""selector"": ""CSS选择器"", ""description"": ""说明""}}]";
 
-                var navResp = await _qwen.ChatAsync(new List<ChatMessage>
-                {
-                    new() { Role = "user", Content = navPrompt }
-                });
-
-                await AiAssistedNavigateAsync(page, navResp.Content ?? "");
+                    var navResp = await _qwen.ChatAsync(new List<ChatMessage>
+                    {
+                        new() { Role = "user", Content = navPrompt }
+                    });
+                    await AiAssistedNavigateAsync(page, navResp.Content ?? "");
+                }
             }
 
             // 第三步：AI 提取配置并对比
@@ -304,6 +305,84 @@ public class CameraBrowserAgent
         await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
         await Task.Delay(2000);
     }
+
+    /// <summary>
+    /// 按配置路径导航（如 "设置->网络设置->平台接入"）
+    /// </summary>
+    private async Task NavigateByPathAsync(IPage page, string navPath)
+    {
+        var steps = navPath.Split("->").Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s));
+        foreach (var step in steps)
+        {
+            _logger.LogInformation("路径导航: 查找 '{Step}'", step);
+            var el = await FindClickableByTextAsync(page, step);
+            if (el != null)
+            {
+                await el.ClickAsync();
+                await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+                await Task.Delay(1500);
+                _logger.LogInformation("路径导航: 已点击 '{Step}'", step);
+            }
+            else
+            {
+                _logger.LogWarning("路径导航: 未找到 '{Step}'", step);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 在主页面和所有 iframe 中查找包含指定文字的可点击元素
+    /// </summary>
+    private async Task<IElementHandle?> FindClickableByTextAsync(IPage page, string text)
+    {
+        var selectors = new[]
+        {
+            $"a:has-text('{text}')", $"span:has-text('{text}')", $"td:has-text('{text}')",
+            $"div:has-text('{text}')", $"li:has-text('{text}')", $"button:has-text('{text}')"
+        };
+
+        // 先在主页面找
+        foreach (var sel in selectors)
+        {
+            var el = await page.QuerySelectorAsync(sel);
+            if (el != null) return el;
+        }
+
+        // 再在每个 iframe 里找
+        foreach (var frame in page.Frames)
+        {
+            if (frame == page.MainFrame) continue;
+            foreach (var sel in selectors)
+            {
+                try
+                {
+                    var el = await frame.QuerySelectorAsync(sel);
+                    if (el != null) return el;
+                }
+                catch { /* iframe 可能不可访问 */ }
+            }
+        }
+        return null;
+    }
+
+    private async Task<string> GetPageLinksAsync(IPage page)
+    {
+        return await page.EvaluateAsync<string>(@"() => {
+            const links = document.querySelectorAll('a, span[onclick], div[onclick], li[onclick], td[onclick]');
+            const items = [];
+            links.forEach(el => {
+                const text = (el.textContent || '').trim();
+                if (text && text.length < 50) {
+                    const id = el.id ? '#' + el.id : '';
+                    const cls = el.className ? '.' + el.className.split(' ')[0] : '';
+                    items.push(el.tagName.toLowerCase() + id + cls + ' => ' + text);
+                }
+            });
+            return items.join('\n').substring(0, 5000);
+        }") ?? "";
+    }
+
+    private string GetManufacturerKey(string ip) => ""; // 后续可根据 Device.Manufacturer 传入
 
     /// <summary>
     /// DOM 模式：硬编码选择器（兜底）
