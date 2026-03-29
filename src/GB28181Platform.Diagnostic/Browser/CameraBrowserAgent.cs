@@ -217,7 +217,7 @@ public class CameraBrowserAgent
             }
             await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
             await Task.Delay(2000);
-            _logger.LogInformation("AI 辅助登录完成，当前 URL: {Url}", page.Url);
+            _logger.LogInformation("登录 {Url} 设备成功", page.Url);
         }
         catch (Exception ex)
         {
@@ -344,6 +344,7 @@ public class CameraBrowserAgent
                 _logger.LogWarning("路径导航: 未找到 '{Step}'", step);
             }
         }
+        _logger.LogInformation("获取 {Path} 页面内容成功", navPath);
     }
 
     /// <summary>
