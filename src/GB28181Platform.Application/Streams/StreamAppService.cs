@@ -49,6 +49,11 @@ public class StreamAppService : IStreamAppService
     public async Task<bool> StopAsync(string deviceId, string channelId)
     {
         var streamId = $"{deviceId}_{channelId}";
+
+        // 1. 先发 BYE 通知摄像机停止推流
+        await _invite.SendByeAsync(streamId);
+
+        // 2. 关闭 ZLMediaKit RTP 端口
         return await _zlm.CloseRtpServerAsync(streamId);
     }
 }
