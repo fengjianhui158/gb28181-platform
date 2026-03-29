@@ -68,6 +68,8 @@ public class DeviceController : ControllerBase
         if (!string.IsNullOrEmpty(request.Name)) device.Name = request.Name;
         if (request.WebPort.HasValue) device.WebPort = request.WebPort.Value;
         if (!string.IsNullOrEmpty(request.Password)) device.Password = request.Password;
+        if (request.WebUsername != null) device.WebUsername = request.WebUsername;
+        if (request.WebPassword != null) device.WebPassword = request.WebPassword;
         device.UpdatedAt = DateTime.Now;
 
         await _db.Updateable(device).ExecuteCommandAsync();
@@ -91,4 +93,6 @@ public class DeviceUpdateRequest
     public string? Name { get; set; }
     public int? WebPort { get; set; }
     public string? Password { get; set; }
+    public string? WebUsername { get; set; }
+    public string? WebPassword { get; set; }
 }

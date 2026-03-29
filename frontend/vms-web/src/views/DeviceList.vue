@@ -53,14 +53,40 @@
             <span class="tech-mono">{{ row.lastKeepaliveAt || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200">
+        <el-table-column label="操作" width="260">
           <template #default="{ row }">
+            <el-button size="small" @click="openEdit(row)">编辑</el-button>
             <el-button size="small" @click="goPreview(row.id)">预览</el-button>
             <el-button size="small" @click="goDiagnostic(row.id)">诊断</el-button>
           </template>
         </el-table-column>
       </el-table>
     </div>
+
+    <!-- 编辑设备弹窗 -->
+    <el-dialog v-model="editVisible" title="编辑设备" width="480px" :close-on-click-modal="false">
+      <el-form :model="editForm" label-width="100px">
+        <el-form-item label="设备编码">
+          <span class="tech-mono">{{ editForm.id }}</span>
+        </el-form-item>
+        <el-form-item label="设备名称">
+          <el-input v-model="editForm.name" placeholder="请输入设备名称" />
+        </el-form-item>
+        <el-form-item label="Web端口">
+          <el-input-number v-model="editForm.webPort" :min="1" :max="65535" />
+        </el-form-item>
+        <el-form-item label="登录用户名">
+          <el-input v-model="editForm.webUsername" placeholder="摄像机Web登录用户名" />
+        </el-form-item>
+        <el-form-item label="登录密码">
+          <el-input v-model="editForm.webPassword" type="password" show-password placeholder="摄像机Web登录密码" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveEdit" :loading="saving">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -68,11 +94,16 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDeviceStore } from '../stores/device'
+import { updateDevice } from '../api/device'
+import { ElMessage } from 'element-plus'
 
 const deviceStore = useDeviceStore()
 const router = useRouter()
 const statusFilter = ref('')
 const searchText = ref('')
+const editVisible = ref(false)
+const saving = ref(false)
+const editForm = ref({ id: '', name: '', webPort: 80, webUsername: '', webPassword: '' })
 
 const onlineCount = computed(() =>
   deviceStore.devices.filter(d => d.status === 'Online').length
@@ -102,6 +133,36 @@ function goPreview(deviceId: string) {
 
 function goDiagnostic(deviceId: string) {
   router.push({ name: 'DiagnosticPanel', query: { deviceId } })
+}
+
+function openEdit(row: any) {
+  editForm.value = {
+    id: row.id,
+    name: row.name || '',
+    webPort: row.webPort || 80,
+    webUsername: row.webUsername || '',
+    webPassword: row.webPassword || ''
+  }
+  editVisible.value = true
+}
+
+async function saveEdit() {
+  saving.value = true
+  try {
+    await updateDevice(editForm.value.id, {
+      name: editForm.value.name,
+      webPort: editForm.value.webPort,
+      webUsername: editForm.value.webUsername,
+      webPassword: editForm.value.webPassword
+    })
+    ElMessage.success('保存成功')
+    editVisible.value = false
+    loadDevices()
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    saving.value = false
+  }
 }
 
 onMounted(() => loadDevices())
