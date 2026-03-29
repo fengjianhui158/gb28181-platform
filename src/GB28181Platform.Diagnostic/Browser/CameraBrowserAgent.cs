@@ -132,28 +132,40 @@ public class CameraBrowserAgent
                 }
             }
 
-            // 第三步：AI 提取配置并对比（遍历所有 frame 获取内容）
+            // 第三步：AI 提取配置并对比（遍历所有 frame，优先取含 SIP/国标关键词的）
             var configHtml = "";
             foreach (var frame in page.Frames)
             {
                 try
                 {
                     var html = await frame.EvaluateAsync<string>(@"() => {
-                        const form = document.querySelector('form, table, [class*=config], [class*=setting], [class*=sip], [class*=gb28181], [class*=platform]');
-                        if (form) return form.outerHTML.substring(0, 8000);
-                        // 检查是否有 SIP/国标相关的 input
-                        const inputs = document.querySelectorAll('input, select');
-                        if (inputs.length > 5) return document.body.innerHTML.substring(0, 8000);
-                        return '';
+                        return document.body ? document.body.innerHTML.substring(0, 8000) : '';
                     }");
-                    if (!string.IsNullOrEmpty(html) && html.Length > configHtml.Length)
+                    if (string.IsNullOrEmpty(html)) continue;
+
+                    // 优先选包含国标/SIP 关键词的 frame
+                    var hasSipKeywords = html.Contains("SIP") || html.Contains("sip") ||
+                        html.Contains("28181") || html.Contains("国标") || html.Contains("平台接入") ||
+                        html.Contains("服务器编号") || html.Contains("Server");
+
+                    _logger.LogDebug("Frame {Url}: 长度={Len}, 含SIP关键词={Has}", frame.Url, html.Length, hasSipKeywords);
+
+                    if (hasSipKeywords)
                     {
                         configHtml = html;
-                        _logger.LogInformation("从 frame {Url} 获取到配置 HTML，长度: {Len}", frame.Url, html.Length);
+                        _logger.LogInformation("从 frame {Url} 获取到国标配置 HTML，长度: {Len}", frame.Url, html.Length);
+                        break; // 找到了就不再找
+                    }
+                    else if (string.IsNullOrEmpty(configHtml))
+                    {
+                        configHtml = html; // 兜底用第一个非空 frame
                     }
                 }
                 catch { /* iframe 可能不可访问 */ }
             }
+
+            if (!configHtml.Contains("SIP") && !configHtml.Contains("28181"))
+                _logger.LogWarning("未在任何 frame 中找到国标/SIP 配置内容，可能导航未到达配置页或内容在动态加载的 iframe 中");
 
             var comparePrompt = $@"以下是摄像机配置页面的 HTML：
 {configHtml?[..Math.Min(6000, configHtml?.Length ?? 0)]}
