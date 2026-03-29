@@ -87,21 +87,41 @@ public class CameraBrowserAgent
             }
 
             // 第二步：AI 辅助导航到国标配置页
+            // 大华等摄像机登录后通过 JS/iframe 动态加载，需要多等一会
+            await Task.Delay(3000);
+
+            // 获取完整页面内容（包括 iframe 内容和所有可点击元素）
             var menuHtml = await page.EvaluateAsync<string>(@"() => {
-                const nav = document.querySelector('nav, .menu, .sidebar, [class*=menu], [class*=nav], [class*=tree], ul');
-                if (nav) return nav.outerHTML.substring(0, 5000);
-                return document.body.innerHTML.substring(0, 5000);
+                // 先尝试获取所有 a 标签和可点击元素的文本
+                const links = document.querySelectorAll('a, span[onclick], div[onclick], li[onclick], td[onclick], [class*=menu], [class*=tree], [class*=nav]');
+                const items = [];
+                links.forEach(el => {
+                    const text = (el.textContent || '').trim();
+                    if (text && text.length < 50) {
+                        const id = el.id ? '#' + el.id : '';
+                        const cls = el.className ? '.' + el.className.split(' ')[0] : '';
+                        const tag = el.tagName.toLowerCase();
+                        items.push(tag + id + cls + ' => ' + text);
+                    }
+                });
+                // 也获取 iframe 列表
+                const iframes = document.querySelectorAll('iframe');
+                iframes.forEach((f, i) => items.push('iframe[' + i + '] src=' + f.src));
+                return items.join('\n').substring(0, 5000);
             }");
+
+            _logger.LogInformation("页面菜单/链接信息长度: {Len}", menuHtml?.Length ?? 0);
 
             if (!string.IsNullOrEmpty(menuHtml))
             {
-                var navPrompt = $@"以下是摄像机管理页面的导航菜单 HTML：
+                var navPrompt = $@"以下是摄像机管理页面中所有可点击的菜单项和链接（格式：元素选择器 => 文本内容）：
 {menuHtml[..Math.Min(4000, menuHtml.Length)]}
 
-请找到与 GB28181、国标、SIP、平台接入相关的配置页面链接。
-如果需要多级导航，返回数组。只返回 JSON：
+请找到与 GB28181、国标、SIP、平台接入、网络配置 相关的菜单项。
+大华摄像机通常在 网络设置 > 平台接入 或 网络 > GB28181 下。
+如果需要多级导航（先点一级菜单再点二级），返回数组。只返回 JSON：
 [{{""selector"": ""CSS选择器"", ""description"": ""说明""}}]
-如果找不到相关链接，返回空数组 []";
+如果找不到，返回空数组 []";
 
                 var navResp = await _qwen.ChatAsync(new List<ChatMessage>
                 {
