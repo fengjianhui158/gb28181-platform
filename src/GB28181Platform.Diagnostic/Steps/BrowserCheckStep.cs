@@ -24,28 +24,22 @@ public class BrowserCheckStep : IDiagnosticStep
 
         var expectedSipIp = _config["SipServer:ListenIp"] ?? "0.0.0.0";
         var expectedServerId = _config["SipServer:ServerId"] ?? "";
+        var mode = (_config["Diagnostic:BrowserCheckMode"] ?? "ai-dom").ToLower();
 
-        // 根据配置选择检查模式：dom（默认）或 screenshot
-        var mode = _config["Diagnostic:BrowserCheckMode"] ?? "dom";
-
-        BrowserCheckResult result;
-        if (mode.Equals("screenshot", StringComparison.OrdinalIgnoreCase))
+        BrowserCheckResult result = mode switch
         {
-            result = await _agent.CheckCameraConfigByScreenshotAsync(
-                context.IpAddress, context.WebPort,
-                context.WebUsername, context.WebPassword,
-                expectedSipIp, expectedServerId);
-        }
-        else
-        {
-            result = await _agent.CheckCameraConfigByDomAsync(
-                context.IpAddress, context.WebPort,
-                context.WebUsername, context.WebPassword,
-                expectedSipIp, expectedServerId);
-        }
+            "screenshot" => await _agent.CheckCameraConfigByScreenshotAsync(
+                context.IpAddress, context.WebPort, context.WebUsername, context.WebPassword,
+                expectedSipIp, expectedServerId),
+            "dom" => await _agent.CheckCameraConfigByDomAsync(
+                context.IpAddress, context.WebPort, context.WebUsername, context.WebPassword,
+                expectedSipIp, expectedServerId),
+            _ => await _agent.CheckCameraConfigByAiDomAsync(
+                context.IpAddress, context.WebPort, context.WebUsername, context.WebPassword,
+                expectedSipIp, expectedServerId),
+        };
 
         sw.Stop();
-
         return new StepResult
         {
             Success = result.Success,
