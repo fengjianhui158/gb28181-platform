@@ -111,6 +111,8 @@ public class CameraBrowserAgent
             {
                 _logger.LogInformation("使用配置路径导航: {Path}", navPath);
                 await NavigateByPathAsync(page, navPath);
+                // 大华等摄像机通过 RPC/AJAX 动态加载配置数据，需要等待
+                await Task.Delay(5000);
             }
             else
             {
