@@ -40,6 +40,12 @@ public class Device
     [SugarColumn(Length = 100)]
     public string Password { get; set; } = string.Empty;
 
+    [SugarColumn(Length = 100, IsNullable = true)]
+    public string? WebUsername { get; set; }
+
+    [SugarColumn(Length = 100, IsNullable = true)]
+    public string? WebPassword { get; set; }
+
     [SugarColumn(Length = 20)]
     public string Status { get; set; } = nameof(DeviceStatus.Offline);
 

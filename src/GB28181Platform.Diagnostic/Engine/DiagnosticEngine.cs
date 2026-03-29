@@ -43,6 +43,8 @@ public class DiagnosticEngine : IDiagnosticEngine
             DeviceId = deviceId,
             IpAddress = device.RemoteIp ?? "",
             WebPort = device.WebPort > 0 ? device.WebPort : 80,
+            WebUsername = device.WebUsername,
+            WebPassword = device.WebPassword,
             TaskId = taskId
         };
 
