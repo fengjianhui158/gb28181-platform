@@ -26,8 +26,10 @@ public class DiagnosticTask
     [SugarColumn(Length = 20)]
     public string Status { get; set; } = "PENDING";
 
+    [SugarColumn(IsNullable = true)]
     public DateTime? StartedAt { get; set; }
 
+    [SugarColumn(IsNullable = true)]
     public DateTime? CompletedAt { get; set; }
 
     [SugarColumn(ColumnDataType = "text", IsNullable = true)]

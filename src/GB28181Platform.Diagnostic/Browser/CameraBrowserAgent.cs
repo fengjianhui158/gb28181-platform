@@ -32,6 +32,11 @@ public class CameraBrowserAgent
 
         try
         {
+            // 设置 Playwright 浏览器路径
+            var browserPath = Environment.GetEnvironmentVariable("PLAYWRIGHT_BROWSERS_PATH")
+                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ms-playwright");
+            Environment.SetEnvironmentVariable("PLAYWRIGHT_BROWSERS_PATH", browserPath);
+
             using var playwright = await Playwright.CreateAsync();
             await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
             var page = await browser.NewPageAsync();
@@ -106,14 +111,28 @@ public class CameraBrowserAgent
         request.Content = JsonContent.Create(requestBody);
 
         var response = await _qwenHttp.SendAsync(request);
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var rawJson = await response.Content.ReadAsStringAsync();
+        _logger.LogDebug("视觉 API 响应: {Response}", rawJson);
 
-        var content = json.GetProperty("choices")[0]
-            .GetProperty("message")
-            .GetProperty("content")
-            .GetString();
+        if (!response.IsSuccessStatusCode)
+            return $"视觉 API 调用失败 ({response.StatusCode}): {rawJson}";
 
-        return content ?? "分析结果为空";
+        var json = JsonSerializer.Deserialize<JsonElement>(rawJson);
+
+        // 安全解析
+        if (json.TryGetProperty("choices", out var choices) &&
+            choices.GetArrayLength() > 0 &&
+            choices[0].TryGetProperty("message", out var message) &&
+            message.TryGetProperty("content", out var contentEl))
+        {
+            // content 可能是字符串或数组
+            if (contentEl.ValueKind == JsonValueKind.String)
+                return contentEl.GetString() ?? "分析结果为空";
+            return contentEl.ToString();
+        }
+
+        // 如果解析失败，返回原始响应供调试
+        return $"视觉分析返回格式异常: {rawJson[..Math.Min(500, rawJson.Length)]}";
     }
 }
 
