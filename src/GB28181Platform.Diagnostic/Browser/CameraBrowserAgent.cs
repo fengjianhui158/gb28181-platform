@@ -132,12 +132,28 @@ public class CameraBrowserAgent
                 }
             }
 
-            // 第三步：AI 提取配置并对比
-            var configHtml = await page.EvaluateAsync<string>(@"() => {
-                const form = document.querySelector('form, table, .config, [class*=config], [class*=setting], [class*=sip], [class*=gb28181]');
-                if (form) return form.outerHTML.substring(0, 8000);
-                return document.body.innerHTML.substring(0, 8000);
-            }");
+            // 第三步：AI 提取配置并对比（遍历所有 frame 获取内容）
+            var configHtml = "";
+            foreach (var frame in page.Frames)
+            {
+                try
+                {
+                    var html = await frame.EvaluateAsync<string>(@"() => {
+                        const form = document.querySelector('form, table, [class*=config], [class*=setting], [class*=sip], [class*=gb28181], [class*=platform]');
+                        if (form) return form.outerHTML.substring(0, 8000);
+                        // 检查是否有 SIP/国标相关的 input
+                        const inputs = document.querySelectorAll('input, select');
+                        if (inputs.length > 5) return document.body.innerHTML.substring(0, 8000);
+                        return '';
+                    }");
+                    if (!string.IsNullOrEmpty(html) && html.Length > configHtml.Length)
+                    {
+                        configHtml = html;
+                        _logger.LogInformation("从 frame {Url} 获取到配置 HTML，长度: {Len}", frame.Url, html.Length);
+                    }
+                }
+                catch { /* iframe 可能不可访问 */ }
+            }
 
             var comparePrompt = $@"以下是摄像机配置页面的 HTML：
 {configHtml?[..Math.Min(6000, configHtml?.Length ?? 0)]}
