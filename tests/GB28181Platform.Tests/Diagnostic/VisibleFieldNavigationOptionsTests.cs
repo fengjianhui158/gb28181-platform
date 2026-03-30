@@ -55,6 +55,34 @@ public class VisibleFieldNavigationOptionsTests
         Assert.Equal("平台接入", options.Manufacturers["dahua"].NavigationPaths[0][2]);
     }
 
+    [Fact]
+    public void AppSettings_UsesVisibleFieldAliasesAndManufacturerNavigationShape()
+    {
+        var appsettingsPath = Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "src",
+            "GB28181Platform.Api",
+            "appsettings.json");
+
+        var config = new ConfigurationBuilder()
+            .AddJsonFile(Path.GetFullPath(appsettingsPath))
+            .Build();
+
+        var aliases = new VisibleFieldAliasOptions();
+        var manufacturers = new ManufacturerNavigationOptions();
+
+        config.GetSection("Diagnostic:VisibleFieldAliases").Bind(aliases.Fields);
+        config.GetSection("Diagnostic:Manufacturers").Bind(manufacturers.Manufacturers);
+
+        Assert.Contains("SIP Server IP", aliases.Fields["SipServerIp"]);
+        Assert.Equal("平台接入", manufacturers.Manufacturers["hikvision"].NavigationPaths[0][3]);
+    }
+
     private static IConfigurationRoot BuildConfig(string json)
     {
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes(json));
