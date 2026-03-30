@@ -43,6 +43,35 @@ public class DeviceMonitorService : BackgroundService
         _logger.LogInformation("设备监控服务已启动, 检测间隔={Interval}s, 超时={Timeout}s",
             _options.KeepaliveCheckIntervalSeconds, _options.KeepaliveTimeoutSeconds);
 
+        // 启动时：把数据库中所有 Online 但内存中没有 session 的设备标记为 Offline
+        // 解决平台重启后，设备未重新注册但数据库状态仍为 Online 的问题
+        try
+        {
+            var onlineDevices = await _db.Queryable<Device>()
+                .Where(d => d.Status == nameof(DeviceStatus.Online))
+                .ToListAsync();
+
+            var resetCount = 0;
+            foreach (var device in onlineDevices)
+            {
+                if (_sessionManager.Get(device.Id) == null)
+                {
+                    device.Status = nameof(DeviceStatus.Offline);
+                    device.UpdatedAt = DateTime.Now;
+                    await _db.Updateable(device).ExecuteCommandAsync();
+                    resetCount++;
+                    _logger.LogInformation("启动同步: 设备 {DeviceId} 无活跃会话，状态重置为 Offline", device.Id);
+                }
+            }
+
+            if (resetCount > 0)
+                _logger.LogInformation("启动同步完成: 共 {Count} 台设备状态重置为 Offline", resetCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "启动时设备状态同步失败");
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try

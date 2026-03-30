@@ -3,6 +3,12 @@ namespace GB28181Platform.AiAgent;
 public interface IQwenClient
 {
     Task<ChatResponse> ChatAsync(List<ChatMessage> messages, List<FunctionDefinition>? functions = null);
+
+    /// <summary>
+    /// 带图片的聊天（用于视觉模型分析截图等场景）
+    /// imageBase64 为 PNG/JPG 图片的 base64 编码
+    /// </summary>
+    Task<ChatResponse> ChatWithImageAsync(string prompt, string imageBase64);
 }
 
 public class ChatMessage

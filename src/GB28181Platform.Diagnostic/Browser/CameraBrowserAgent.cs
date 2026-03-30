@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using System.Text.Json;
 using GB28181Platform.AiAgent;
 using Microsoft.Extensions.Configuration;
@@ -12,12 +12,15 @@ public class CameraBrowserAgent
     private readonly IQwenClient _qwen;
     private readonly IConfiguration _config;
     private readonly ILogger<CameraBrowserAgent> _logger;
+    private readonly DahuaRpc2Client _dahuaRpc2;
 
-    public CameraBrowserAgent(IQwenClient qwen, IConfiguration config, ILogger<CameraBrowserAgent> logger)
+    public CameraBrowserAgent(IQwenClient qwen, IConfiguration config,
+        ILogger<CameraBrowserAgent> logger, DahuaRpc2Client dahuaRpc2)
     {
         _qwen = qwen;
         _config = config;
         _logger = logger;
+        _dahuaRpc2 = dahuaRpc2;
     }
 
     private async Task<(IPlaywright, IBrowser, IPage)> LaunchBrowserAsync(string ip, int port)
@@ -41,13 +44,57 @@ public class CameraBrowserAgent
         string ip, int port, string? username, string? password,
         string expectedSipServerIp, string expectedServerId, string? manufacturer = null)
     {
+        var mfr = (manufacturer ?? "").ToLower();
+
+        // ========== 浏览器登录 + RPC2 获取配置 ==========
         IPlaywright? pw = null;
         IBrowser? browser = null;
         try
         {
             (pw, browser, var page) = await LaunchBrowserAsync(ip, port);
 
-            // 第一步：AI 辅助登录
+            // 注册 RPC2 响应拦截（收集所有 RPC2/CGI 响应）
+            var rpcPayloads = new List<string>();
+            var rpcConfigJson = "";
+            var rpcIntercepted = false;
+
+            page.Response += async (_, response) =>
+            {
+                try
+                {
+                    var url = response.Url;
+                    if (!url.Contains("RPC2", StringComparison.OrdinalIgnoreCase) &&
+                        !url.Contains("cgi-bin", StringComparison.OrdinalIgnoreCase))
+                        return;
+
+                    var body = await response.TextAsync();
+                    if (string.IsNullOrWhiteSpace(body)) return;
+
+                    _logger.LogInformation("拦截到 RPC/CGI 响应: URL={Url}, 长度={Len}", url, body.Length);
+
+                    // 收集所有含相关关键词的响应
+                    if (HasRelevantKeywords(body))
+                    {
+                        lock (rpcPayloads)
+                        {
+                            if (!rpcPayloads.Any(existing => existing == body))
+                                rpcPayloads.Add(body);
+                        }
+                    }
+
+                    // 特别标记含 SIP/28181 的响应
+                    if (body.Contains("SIP") || body.Contains("sip") || body.Contains("28181") ||
+                        body.Contains("GBT28181") || body.Contains("ServerID") || body.Contains("ServerIp"))
+                    {
+                        rpcConfigJson = body;
+                        rpcIntercepted = true;
+                        _logger.LogInformation("拦截到 RPC2 国标配置响应: URL={Url}, 长度={Len}", url, body.Length);
+                    }
+                }
+                catch { /* 某些响应可能无法读取 body */ }
+            };
+
+            // ========== 第一步：AI 辅助登录 ==========
             if (!string.IsNullOrEmpty(username))
             {
                 var loginHtml = await page.EvaluateAsync<string>(@"() => {
@@ -86,11 +133,42 @@ public class CameraBrowserAgent
                 }
             }
 
-            // 第二步：导航到国标配置页
-            // 优先用厂商配置路径，没有则 AI 自动分析
+            // ========== 第二步：浏览器登录成功后，用 session 直接调 RPC2 获取国标配置 ==========
             await Task.Delay(3000);
 
-            var mfr = (manufacturer ?? "").ToLower();
+            // 大华摄像机：浏览器登录后，直接在浏览器上下文中调 RPC2 获取 GBT28181 配置
+            if (mfr.Contains("dahua") || mfr.Contains("大华") || mfr.Contains("dh"))
+            {
+                _logger.LogInformation("浏览器登录成功，尝试在浏览器上下文中调 RPC2 获取国标配置");
+                var rpc2Result = await FetchGBConfigViaPageAsync(page);
+                if (!string.IsNullOrEmpty(rpc2Result))
+                {
+                    // 拿到了，直接用文本模型分析
+                    var rpcPrompt = $@"以下是从大华摄像机 RPC2 接口获取到的国标(GBT28181)配置 JSON：
+{rpc2Result[..Math.Min(6000, rpc2Result.Length)]}
+
+我们平台数据库中该设备的期望配置：
+- SIP 服务器 IP: {expectedSipServerIp}
+- 服务器编码(Server ID): {expectedServerId}
+
+请从 JSON 中提取国标/SIP 相关配置值，逐项与期望配置对比，给出结论。用中文回答。";
+
+                    var rpcResp = await _qwen.ChatAsync(new List<ChatMessage>
+                    {
+                        new() { Role = "user", Content = rpcPrompt }
+                    });
+
+                    return new BrowserCheckResult
+                    {
+                        Success = true,
+                        Analysis = rpcResp.Content ?? "AI 未返回分析结果"
+                    };
+                }
+                _logger.LogInformation("浏览器上下文 RPC2 调用未获取到国标配置，继续导航方式");
+            }
+
+            // ========== 第三步：导航到国标配置页 ==========
+
             var navPath = _config[$"Diagnostic:NavPaths:{mfr}"];
 
             // 如果精确匹配不到，模糊匹配
@@ -111,8 +189,81 @@ public class CameraBrowserAgent
             {
                 _logger.LogInformation("使用配置路径导航: {Path}", navPath);
                 await NavigateByPathAsync(page, navPath);
-                // 大华等摄像机通过 RPC/AJAX 动态加载配置数据，需要等待
+                await Task.Delay(3000);
+
+                // 关键：清空之前收集的 RPC2 响应，只保留点击"平台接入"后的
+                var platformAccessPayloads = new List<string>();
+
+                // 注册一个新的精确拦截器：收集接下来所有 RPC2 响应（不过滤关键词）
+                page.Response += async (_, response) =>
+                {
+                    try
+                    {
+                        var url = response.Url;
+                        if (!url.Contains("RPC2", StringComparison.OrdinalIgnoreCase)) return;
+                        if (url.Contains("RPC2_Login") || url.Contains("RPC2_Notify")) return;
+
+                        var body = await response.TextAsync();
+                        if (string.IsNullOrWhiteSpace(body) || body.Length < 50) return;
+
+                        lock (platformAccessPayloads)
+                        {
+                            platformAccessPayloads.Add(body);
+                        }
+                        _logger.LogInformation("平台接入 RPC2 响应: 长度={Len}, 前100字符={Preview}",
+                            body.Length, body[..Math.Min(100, body.Length)]);
+                    }
+                    catch { }
+                };
+
+                // 重新点击"平台接入"触发配置数据加载
+                var lastStep = navPath.Split("->").Select(s => s.Trim()).LastOrDefault();
+                if (!string.IsNullOrEmpty(lastStep))
+                {
+                    var el = await FindClickableByTextAsync(page, lastStep);
+                    if (el != null)
+                    {
+                        await el.ClickAsync();
+                        _logger.LogInformation("重新点击 '{Step}' 以精确捕获配置数据", lastStep);
+                    }
+                }
                 await Task.Delay(5000);
+
+                _logger.LogInformation("平台接入点击后捕获到 {Count} 条 RPC2 响应", platformAccessPayloads.Count);
+
+                // 如果捕获到了响应，直接全部交给 AI 分析
+                if (platformAccessPayloads.Count > 0)
+                {
+                    var allPayloads = string.Join("\n\n---RPC2响应分隔---\n\n",
+                        platformAccessPayloads.Select(p => p[..Math.Min(3000, p.Length)]));
+
+                    var rpcPrompt = $@"以下是点击摄像机【平台接入】配置页后，从 RPC2 接口捕获到的所有响应数据：
+
+{allPayloads[..Math.Min(8000, allPayloads.Length)]}
+
+我们平台数据库中该设备的期望配置：
+- SIP 服务器 IP: {expectedSipServerIp}
+- 服务器编码(Server ID): {expectedServerId}
+
+请：
+1. 从上述 RPC2 响应中找到与国标(GB28181)/SIP/平台接入相关的配置数据
+2. 提取 SIP 服务器 IP、服务器编码、设备编码、端口、域等配置值
+3. 与期望配置逐项对比
+4. 如果响应中确实没有国标配置数据，请明确说明
+
+用中文回答，先说结论，再给详细分析。";
+
+                    var rpcResp = await _qwen.ChatAsync(new List<ChatMessage>
+                    {
+                        new() { Role = "user", Content = rpcPrompt }
+                    });
+
+                    return new BrowserCheckResult
+                    {
+                        Success = true,
+                        Analysis = rpcResp.Content ?? "AI 未返回分析结果"
+                    };
+                }
             }
             else
             {
@@ -134,59 +285,223 @@ public class CameraBrowserAgent
                 }
             }
 
-            // 第三步：AI 提取配置并对比（遍历所有 frame，优先取含 SIP/国标关键词的）
+            // ========== 第三步：提取配置 ==========
+            // 策略0（最优）：主动调用大华 RPC2 接口获取 GBT28181 配置
+            var dahuaRpcConfig = "";
+            if (!string.IsNullOrEmpty(navPath))
+            {
+                dahuaRpcConfig = await TryFetchDahuaGBConfigViaRpc2Async(page, ip, port);
+
+                if (string.IsNullOrEmpty(dahuaRpcConfig))
+                {
+                    // 兜底：重新点击最后一个导航步骤触发页面加载
+                    var lastStep = navPath.Split("->").Select(s => s.Trim()).LastOrDefault();
+                    if (!string.IsNullOrEmpty(lastStep))
+                    {
+                        var el = await FindClickableByTextAsync(page, lastStep);
+                        if (el != null)
+                        {
+                            await el.ClickAsync();
+                            _logger.LogInformation("重新点击 '{Step}' 以触发 RPC2 数据加载", lastStep);
+                        }
+                    }
+                    await Task.Delay(5000);
+                }
+            }
+
+            // 策略1：遍历所有 frame，提取 input 的 value
             var configHtml = "";
+            var inputValues = new Dictionary<string, string>();
+
+            _logger.LogInformation("开始遍历 {Count} 个 frame 查找配置内容", page.Frames.Count);
             foreach (var frame in page.Frames)
             {
                 try
                 {
+                    var frameUrl = frame.Url;
+                    _logger.LogInformation("检查 Frame: URL={Url}, Name={Name}", frameUrl, frame.Name);
+
+                    // 提取所有 input 的 name/id 和 value
+                    var frameInputs = await frame.EvaluateAsync<JsonElement>(@"() => {
+                        const result = {};
+                        const inputs = document.querySelectorAll('input, select, textarea');
+                        inputs.forEach(el => {
+                            const key = el.name || el.id || el.getAttribute('data-field') || '';
+                            const val = el.value || el.textContent || '';
+                            if (key && val) result[key] = val;
+                        });
+                        // 也提取 span/td 中的配置值（某些厂商用只读文本显示）
+                        const labels = document.querySelectorAll('td, span, label, div');
+                        labels.forEach(el => {
+                            const text = (el.textContent || '').trim();
+                            if (text.includes(':') && text.length < 200) {
+                                const parts = text.split(':');
+                                if (parts.length === 2) result['label_' + parts[0].trim()] = parts[1].trim();
+                            }
+                        });
+                        return result;
+                    }");
+
+                    var inputCount = 0;
+                    foreach (var prop in frameInputs.EnumerateObject())
+                    {
+                        var val = prop.Value.GetString() ?? "";
+                        if (!string.IsNullOrEmpty(val))
+                        {
+                            inputValues[prop.Name] = val;
+                            inputCount++;
+                        }
+                    }
+                    _logger.LogInformation("Frame {Url}: 提取到 {Count} 个 input 值", frameUrl, inputCount);
+
+                    // 策略2：innerHTML 关键词匹配（兜底）
                     var html = await frame.EvaluateAsync<string>(@"() => {
                         return document.body ? document.body.innerHTML.substring(0, 8000) : '';
                     }");
                     if (string.IsNullOrEmpty(html)) continue;
 
-                    // 优先选包含国标/SIP 关键词的 frame
                     var hasSipKeywords = html.Contains("SIP") || html.Contains("sip") ||
                         html.Contains("28181") || html.Contains("国标") || html.Contains("平台接入") ||
                         html.Contains("服务器编号") || html.Contains("Server");
 
-                    _logger.LogDebug("Frame {Url}: 长度={Len}, 含SIP关键词={Has}", frame.Url, html.Length, hasSipKeywords);
+                    _logger.LogDebug("Frame {Url}: HTML长度={Len}, 含SIP关键词={Has}", frameUrl, html.Length, hasSipKeywords);
 
                     if (hasSipKeywords)
                     {
                         configHtml = html;
-                        _logger.LogInformation("从 frame {Url} 获取到国标配置 HTML，长度: {Len}", frame.Url, html.Length);
-                        break; // 找到了就不再找
+                        _logger.LogInformation("从 frame {Url} 获取到含国标关键词的 HTML，长度: {Len}", frameUrl, html.Length);
+                        break;
                     }
                     else if (string.IsNullOrEmpty(configHtml))
                     {
-                        configHtml = html; // 兜底用第一个非空 frame
+                        configHtml = html;
                     }
                 }
-                catch { /* iframe 可能不可访问 */ }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug("Frame 访问失败: {Msg}", ex.Message);
+                }
             }
 
-            if (!configHtml.Contains("SIP") && !configHtml.Contains("28181"))
+            // ========== 汇总配置信息（优先级：主动RPC2 > 拦截RPC2 > input > HTML）==========
+            var configSummary = "";
+            if (!string.IsNullOrEmpty(dahuaRpcConfig))
+            {
+                configSummary = $"[大华 RPC2 主动获取的 GBT28181 配置]\n{dahuaRpcConfig[..Math.Min(6000, dahuaRpcConfig.Length)]}";
+                _logger.LogInformation("使用主动 RPC2 调用获取的国标配置数据");
+            }
+            else if (rpcIntercepted && !string.IsNullOrEmpty(rpcConfigJson))
+            {
+                configSummary = $"[RPC2 拦截数据]\n{rpcConfigJson[..Math.Min(6000, rpcConfigJson.Length)]}";
+                _logger.LogInformation("使用 RPC2 拦截数据作为主要配置来源");
+            }
+            else if (rpcPayloads.Count > 0)
+            {
+                // 把所有拦截到的 RPC2 响应都送给 AI 分析
+                var rpcSummary = string.Join("\n\n---\n\n",
+                    rpcPayloads.Take(5).Select(p => p[..Math.Min(2000, p.Length)]));
+                configSummary = $"[RPC2 拦截的所有相关响应 - 共 {rpcPayloads.Count} 条]\n{rpcSummary}";
+                _logger.LogInformation("使用 {Count} 条 RPC2 拦截响应作为配置来源", rpcPayloads.Count);
+            }
+            else if (inputValues.Count > 0)
+            {
+                var inputSummary = string.Join("\n", inputValues.Select(kv => $"  {kv.Key} = {kv.Value}"));
+                configSummary = $"[Input 表单值 - 共 {inputValues.Count} 项]\n{inputSummary}";
+                if (!string.IsNullOrEmpty(configHtml))
+                    configSummary += $"\n\n[页面 HTML 片段]\n{configHtml[..Math.Min(3000, configHtml.Length)]}";
+                _logger.LogInformation("使用 input 表单值作为主要配置来源，共 {Count} 项", inputValues.Count);
+            }
+            else
+            {
+                configSummary = configHtml ?? "";
+                _logger.LogWarning("未能通过 RPC2 或 input 提取配置，使用 HTML 兜底");
+            }
+
+            if (string.IsNullOrEmpty(configSummary) || (!configSummary.Contains("SIP") && !configSummary.Contains("28181") && inputValues.Count == 0))
                 _logger.LogWarning("未在任何 frame 中找到国标/SIP 配置内容，可能导航未到达配置页或内容在动态加载的 iframe 中");
 
-            var comparePrompt = $@"以下是摄像机配置页面的 HTML：
-{configHtml?[..Math.Min(6000, configHtml?.Length ?? 0)]}
+            // ========== 第四步：AI 对比分析 ==========
+            // 判断是否拿到了有效的配置数据
+            var hasValidConfig = !string.IsNullOrEmpty(configSummary) &&
+                (configSummary.Contains("SIP") || configSummary.Contains("28181") ||
+                 configSummary.Contains("GBT28181") || configSummary.Contains("ServerID") ||
+                 configSummary.Contains("Enable") || inputValues.Count > 3);
+
+            ChatResponse configResp;
+
+            if (!hasValidConfig)
+            {
+                // DOM/RPC2 都没拿到有效数据，fallback 到截图 + 视觉模型分析
+                _logger.LogInformation("DOM/RPC2 未获取到有效国标配置，切换到截图分析模式");
+
+                try
+                {
+                    // 截图当前页面（包含所有 frame 的完整渲染结果）
+                    var screenshotBytes = await page.ScreenshotAsync(new() { FullPage = true });
+                    var screenshotBase64 = Convert.ToBase64String(screenshotBytes);
+                    _logger.LogInformation("截图成功，大小: {Size} bytes", screenshotBytes.Length);
+
+                    var visionPrompt = $@"这是一台摄像机的国标(GB28181)平台接入配置页面的截图。
+请仔细查看截图中的所有配置项，提取以下信息：
+1. SIP 服务器 IP 地址
+2. SIP 服务器端口
+3. 服务器编码/Server ID
+4. 设备编码/Device ID
+5. SIP 域/Realm
+6. 是否启用国标接入
+7. 其他你能看到的国标/SIP 相关配置
+
+然后与以下期望配置对比：
+- 期望 SIP 服务器 IP: {expectedSipServerIp}
+- 期望服务器编码(Server ID): {expectedServerId}
+
+用中文回答，先说结论（配置是否匹配），再逐项列出从截图中读取到的值和对比结果。";
+
+                    configResp = await _qwen.ChatWithImageAsync(visionPrompt, screenshotBase64);
+                    _logger.LogInformation("视觉模型分析完成");
+                }
+                catch (Exception visionEx)
+                {
+                    _logger.LogWarning("视觉模型分析失败: {Msg}，回退到文本模式", visionEx.Message);
+                    // 视觉模型也失败了，用文本模型兜底
+                    var fallbackPrompt = $@"以下是摄像机配置页面提取到的信息（可能不完整）：
+{configSummary[..Math.Min(6000, configSummary.Length)]}
+
+我们平台数据库中该设备的期望配置：
+- SIP 服务器 IP: {expectedSipServerIp}
+- 服务器编码(Server ID): {expectedServerId}
+
+请分析上述信息，尝试提取国标/SIP 配置并与期望值对比。
+如果信息不足无法判断，请明确说明。用中文回答。";
+
+                    configResp = await _qwen.ChatAsync(new List<ChatMessage>
+                    {
+                        new() { Role = "user", Content = fallbackPrompt }
+                    });
+                }
+            }
+            else
+            {
+                // DOM/RPC2 拿到了有效数据，直接用文本模型分析
+                var comparePrompt = $@"以下是摄像机配置页面提取到的信息：
+{configSummary[..Math.Min(6000, configSummary.Length)]}
 
 我们平台数据库中该设备的期望配置：
 - SIP 服务器 IP: {expectedSipServerIp}
 - 服务器编码(Server ID): {expectedServerId}
 
 请：
-1. 从 HTML 中提取摄像机当前的国标/SIP 相关配置值
+1. 从上述信息中提取摄像机当前的国标/SIP 相关配置值
 2. 逐项与期望配置对比
 3. 给出结论
 
 用中文回答，先说结论，再给详细分析。";
 
-            var configResp = await _qwen.ChatAsync(new List<ChatMessage>
-            {
-                new() { Role = "user", Content = comparePrompt }
-            });
+                configResp = await _qwen.ChatAsync(new List<ChatMessage>
+                {
+                    new() { Role = "user", Content = comparePrompt }
+                });
+            }
 
             return new BrowserCheckResult
             {
@@ -207,6 +522,155 @@ public class CameraBrowserAgent
         {
             if (browser != null) await browser.DisposeAsync();
             pw?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 浏览器登录成功后，直接在页面上下文中用 fetch 调 RPC2 获取国标配置
+    /// 优点：自动复用浏览器的 session/cookie，不需要自己算密码哈希
+    /// </summary>
+    private async Task<string> FetchGBConfigViaPageAsync(IPage page)
+    {
+        var configNames = new[] { "GBT28181", "GB28181", "T28181", "PlatformAccess" };
+
+        foreach (var name in configNames)
+        {
+            try
+            {
+                _logger.LogInformation("浏览器上下文 RPC2: 尝试获取 {Name} 配置", name);
+
+                var result = await page.EvaluateAsync<string>($@"async () => {{
+                    try {{
+                        const resp = await fetch('/RPC2', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{
+                                method: 'configManager.getConfig',
+                                params: {{ name: '{name}' }},
+                                id: 10
+                            }})
+                        }});
+                        const text = await resp.text();
+                        return text;
+                    }} catch(e) {{
+                        return 'ERROR:' + e.message;
+                    }}
+                }}");
+
+                if (string.IsNullOrEmpty(result) || result.StartsWith("ERROR:"))
+                {
+                    _logger.LogInformation("RPC2 getConfig({Name}) 失败: {Result}", name, result);
+                    continue;
+                }
+
+                // 检查是否返回了有效数据（result:true 表示成功）
+                if (result.Contains("\"result\":true") || result.Contains("\"result\": true"))
+                {
+                    _logger.LogInformation("浏览器上下文 RPC2 获取到 {Name} 配置，长度: {Len}", name, result.Length);
+                    return result;
+                }
+
+                // 大华有些固件返回 result:false 但 params 里有数据，也算成功
+                if (result.Contains("\"params\"") && result.Length > 200)
+                {
+                    _logger.LogInformation("浏览器上下文 RPC2 {Name} 返回了 params 数据（result 非 true），长度: {Len}", name, result.Length);
+                    return result;
+                }
+
+                _logger.LogInformation("RPC2 getConfig({Name}) 返回（未匹配成功条件）: {Result}", name, result[..Math.Min(300, result.Length)]);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogInformation("RPC2 getConfig({Name}) 异常: {Msg}", name, ex.Message);
+            }
+        }
+
+        return "";
+    }
+
+    /// <summary>
+    /// 主动调用大华 RPC2 接口获取 GBT28181 国标配置
+    /// 大华摄像机的配置数据不在 DOM 中，而是通过 RPC2 JSON 接口动态加载
+    /// </summary>
+    private async Task<string> TryFetchDahuaGBConfigViaRpc2Async(IPage page, string ip, int port)
+    {
+        try
+        {
+            // 通过 page.evaluate 在浏览器上下文中发 RPC2 请求（自动带 cookie/session）
+            var configNames = new[] { "GBT28181", "GB28181", "T28181", "PlatformAccess", "SIPServer" };
+
+            foreach (var configName in configNames)
+            {
+                _logger.LogInformation("尝试通过 RPC2 获取配置: {Name}", configName);
+
+                var result = await page.EvaluateAsync<string>($@"async () => {{
+                    try {{
+                        const resp = await fetch('/RPC2', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{
+                                method: 'configManager.getConfig',
+                                params: {{ name: '{configName}' }},
+                                id: 1
+                            }})
+                        }});
+                        return await resp.text();
+                    }} catch(e) {{
+                        return 'ERROR:' + e.message;
+                    }}
+                }}");
+
+                if (string.IsNullOrEmpty(result) || result.StartsWith("ERROR:"))
+                {
+                    _logger.LogDebug("RPC2 getConfig({Name}) 失败: {Result}", configName, result);
+                    continue;
+                }
+
+                _logger.LogInformation("RPC2 getConfig({Name}) 响应长度: {Len}", configName, result.Length);
+
+                // 检查是否是错误响应
+                if (result.Contains("\"error\"") && !result.Contains("SIP") && !result.Contains("Enable"))
+                {
+                    _logger.LogDebug("RPC2 getConfig({Name}) 返回错误响应，跳过", configName);
+                    continue;
+                }
+
+                _logger.LogInformation("通过 RPC2 主动获取到 {Name} 配置数据，长度: {Len}", configName, result.Length);
+                return result;
+            }
+
+            // 兜底：尝试获取 Network 配置看是否包含国标信息
+            var defaultResult = await page.EvaluateAsync<string>(@"async () => {
+                try {
+                    const resp = await fetch('/RPC2', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            method: 'configManager.getConfig',
+                            params: { name: 'Network' },
+                            id: 2
+                        })
+                    });
+                    return await resp.text();
+                } catch(e) {
+                    return 'ERROR:' + e.message;
+                }
+            }");
+
+            if (!string.IsNullOrEmpty(defaultResult) && !defaultResult.StartsWith("ERROR:") &&
+                (defaultResult.Contains("SIP") || defaultResult.Contains("28181")))
+            {
+                _logger.LogInformation("从 Network 配置中发现国标相关数据，长度: {Len}", defaultResult.Length);
+                return defaultResult;
+            }
+
+            _logger.LogWarning("所有 RPC2 配置名称均未获取到国标配置数据");
+            return "";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("主动 RPC2 调用失败: {Msg}", ex.Message);
+            return "";
         }
     }
 
@@ -275,7 +739,6 @@ public class CameraBrowserAgent
     {
         try
         {
-            // AI 可能返回 ```json ... ``` 包裹的内容
             var start = text.IndexOf('{');
             var end = text.LastIndexOf('}');
             if (start >= 0 && end > start)
@@ -308,6 +771,18 @@ public class CameraBrowserAgent
             _logger.LogWarning("解析 AI JSON 数组响应失败: {Msg}", ex.Message);
         }
         return null;
+    }
+
+    private static bool HasRelevantKeywords(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+        var keywords = new[]
+        {
+            "sip", "28181", "gb28181", "gbt28181", "国标", "平台接入", "平台",
+            "server", "serverid", "server ip", "device id", "服务器", "服务器编号",
+            "设备编码", "设备id", "realm", "domain", "端口", "认证"
+        };
+        return keywords.Any(keyword => text.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -372,14 +847,12 @@ public class CameraBrowserAgent
             $"div:has-text('{text}')", $"li:has-text('{text}')", $"button:has-text('{text}')"
         };
 
-        // 先在主页面找
         foreach (var sel in selectors)
         {
             var el = await page.QuerySelectorAsync(sel);
             if (el != null) return el;
         }
 
-        // 再在每个 iframe 里找
         foreach (var frame in page.Frames)
         {
             if (frame == page.MainFrame) continue;
@@ -390,7 +863,7 @@ public class CameraBrowserAgent
                     var el = await frame.QuerySelectorAsync(sel);
                     if (el != null) return el;
                 }
-                catch { /* iframe 可能不可访问 */ }
+                catch { }
             }
         }
         return null;
@@ -412,8 +885,6 @@ public class CameraBrowserAgent
             return items.join('\n').substring(0, 5000);
         }") ?? "";
     }
-
-    private string GetManufacturerKey(string ip) => ""; // 后续可根据 Device.Manufacturer 传入
 
     /// <summary>
     /// DOM 模式：硬编码选择器（兜底）

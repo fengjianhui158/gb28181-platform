@@ -66,6 +66,7 @@ builder.Services.AddScoped<IDiagnosticEngine, DiagnosticEngine>();
 builder.Services.AddScoped<IDiagnosticStep, PingCheckStep>();
 builder.Services.AddScoped<IDiagnosticStep, PortCheckStep>();
 builder.Services.AddScoped<IDiagnosticStep, BrowserCheckStep>();
+builder.Services.AddSingleton<DahuaRpc2Client>();
 builder.Services.AddSingleton<CameraBrowserAgent>();
 
 // Diagnostic Task Queue
