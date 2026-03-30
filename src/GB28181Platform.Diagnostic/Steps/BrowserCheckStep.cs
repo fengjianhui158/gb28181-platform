@@ -24,7 +24,7 @@ public class BrowserCheckStep : IDiagnosticStep
 
         var expectedSipIp = _config["SipServer:ListenIp"] ?? "0.0.0.0";
         var expectedServerId = _config["SipServer:ServerId"] ?? "";
-        var mode = (_config["Diagnostic:BrowserCheckMode"] ?? "ai-dom").ToLower();
+        var mode = (_config["Diagnostic:BrowserCheckMode"] ?? "dom").ToLower();
 
         BrowserCheckResult result = mode switch
         {

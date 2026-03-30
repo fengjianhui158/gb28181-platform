@@ -79,6 +79,7 @@ public class VisibleFieldNavigationOptionsTests
         config.GetSection("Diagnostic:VisibleFieldAliases").Bind(aliases.Fields);
         config.GetSection("Diagnostic:Manufacturers").Bind(manufacturers.Manufacturers);
 
+        Assert.Equal("dom", config["Diagnostic:BrowserCheckMode"]);
         Assert.Contains("SIP Server IP", aliases.Fields["SipServerIp"]);
         Assert.Equal("平台接入", manufacturers.Manufacturers["hikvision"].NavigationPaths[0][3]);
     }
