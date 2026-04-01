@@ -441,7 +441,8 @@ public class InteractiveNavigationAgent
             try
             {
                 var loc = frame.Locator(sel).First;
-                if (await loc.IsVisibleAsync(new() { Timeout = 3000 }))
+                await loc.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 3000 });
+                if (await loc.IsVisibleAsync())
                 {
                     var itemText = (await loc.InnerTextAsync(new() { Timeout = 2000 }))?.Trim() ?? "";
 
