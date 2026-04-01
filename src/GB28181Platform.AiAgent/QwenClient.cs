@@ -11,52 +11,42 @@ public class QwenClient : IQwenClient
     private readonly HttpClient? _visionHttp;
     private readonly string _model;
     private readonly string _visionModel;
+    private readonly bool _hasDedicatedVisionEndpoint;
     private readonly ILogger<QwenClient> _logger;
 
     public QwenClient(IConfiguration config, ILogger<QwenClient> logger)
     {
-        var baseUrl = (config["QwenApi:BaseUrl"] ?? "http://localhost:8000").TrimEnd('/');
-        var apiKey = config["QwenApi:ApiKey"] ?? "";
-        _model = config["QwenApi:Model"] ?? "qwen-3.5";
+        var routing = QwenEndpointRouting.FromConfiguration(config);
+        _model = routing.Text.Model;
+        _visionModel = routing.Vision.Model;
+        _hasDedicatedVisionEndpoint = routing.HasDedicatedVisionEndpoint;
         _logger = logger;
 
-        _http = new HttpClient { BaseAddress = new Uri(baseUrl) };
-        if (!string.IsNullOrEmpty(apiKey))
-            _http.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
-
-        // 视觉模型配置（可选，默认用通义千问 VL）
-        var visionBaseUrl = config["QwenApi:VisionBaseUrl"];
-        var visionApiKey = config["QwenApi:VisionApiKey"];
-        _visionModel = config["QwenApi:VisionModel"] ?? "qwen-vl-max";
-
-        if (!string.IsNullOrEmpty(visionBaseUrl))
-        {
-            _visionHttp = new HttpClient { BaseAddress = new Uri(visionBaseUrl.TrimEnd('/')) };
-            if (!string.IsNullOrEmpty(visionApiKey))
-                _visionHttp.DefaultRequestHeaders.Add("Authorization", $"Bearer {visionApiKey}");
-        }
+        _http = BuildClient(routing.Text);
+        _visionHttp = _hasDedicatedVisionEndpoint ? BuildClient(routing.Vision) : null;
     }
 
     public async Task<ChatResponse> ChatAsync(List<ChatMessage> messages, List<FunctionDefinition>? functions = null)
     {
-        // 构建消息，兼容 tool_calls 格式
         var msgList = messages.Select(m =>
         {
             var dict = new Dictionary<string, object> { ["role"] = m.Role };
 
             if (m.Role == "assistant" && m.FunctionCall != null)
             {
-                // assistant 带 tool_calls（新版格式）
                 dict["content"] = (object?)m.Content ?? "";
-                dict["tool_calls"] = new[] { new {
-                    id = m.ToolCallId ?? $"call_{m.FunctionCall.Name}",
-                    type = "function",
-                    function = new { name = m.FunctionCall.Name, arguments = m.FunctionCall.Arguments }
-                }};
+                dict["tool_calls"] = new[]
+                {
+                    new
+                    {
+                        id = m.ToolCallId ?? $"call_{m.FunctionCall.Name}",
+                        type = "function",
+                        function = new { name = m.FunctionCall.Name, arguments = m.FunctionCall.Arguments }
+                    }
+                };
             }
             else if (m.Role == "tool")
             {
-                // tool 角色回传函数结果
                 dict["tool_call_id"] = m.Name ?? "";
                 dict["content"] = m.Content ?? "";
             }
@@ -65,6 +55,7 @@ public class QwenClient : IQwenClient
                 if (m.Content != null) dict["content"] = m.Content;
                 if (m.Name != null) dict["name"] = m.Name;
             }
+
             return dict;
         }).ToList();
 
@@ -74,7 +65,6 @@ public class QwenClient : IQwenClient
             ["messages"] = msgList
         };
 
-        // 使用新版 tools 格式（兼容 DeepSeek、千问、OpenAI）
         if (functions != null && functions.Count > 0)
         {
             var tools = functions.Select(f => new
@@ -105,13 +95,15 @@ public class QwenClient : IQwenClient
             var choice = choices[0];
 
             if (choice.TryGetProperty("finish_reason", out var fr) && fr.ValueKind == JsonValueKind.String)
+            {
                 result.FinishReason = fr.GetString() ?? "";
+            }
 
             if (choice.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.Object)
             {
-                // 新版: tool_calls 数组
                 if (message.TryGetProperty("tool_calls", out var toolCalls) &&
-                    toolCalls.ValueKind == JsonValueKind.Array && toolCalls.GetArrayLength() > 0)
+                    toolCalls.ValueKind == JsonValueKind.Array &&
+                    toolCalls.GetArrayLength() > 0)
                 {
                     var tc = toolCalls[0];
                     if (tc.TryGetProperty("function", out var fn) && fn.ValueKind == JsonValueKind.Object)
@@ -121,12 +113,13 @@ public class QwenClient : IQwenClient
                             Name = fn.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "",
                             Arguments = fn.TryGetProperty("arguments", out var a) ? a.GetString() ?? "{}" : "{}"
                         };
-                        // 保存 tool_call_id 用于后续消息
+
                         if (tc.TryGetProperty("id", out var id))
+                        {
                             result.ToolCallId = id.GetString() ?? "";
+                        }
                     }
                 }
-                // 旧版: function_call 对象
                 else if (message.TryGetProperty("function_call", out var fc) && fc.ValueKind == JsonValueKind.Object)
                 {
                     result.FunctionCall = new FunctionCall
@@ -151,16 +144,11 @@ public class QwenClient : IQwenClient
         return result;
     }
 
-    /// <summary>
-    /// 带图片的聊天 - 用于视觉模型分析截图
-    /// 使用 OpenAI 兼容的多模态消息格式（通义千问 VL / GPT-4o 等均支持）
-    /// </summary>
     public async Task<ChatResponse> ChatWithImageAsync(string prompt, string imageBase64)
     {
         var client = _visionHttp ?? _http;
-        var model = _visionHttp != null ? _visionModel : _model;
+        var model = _hasDedicatedVisionEndpoint ? _visionModel : _model;
 
-        // OpenAI 兼容的多模态消息格式
         var body = new Dictionary<string, object>
         {
             ["model"] = model,
@@ -213,9 +201,20 @@ public class QwenClient : IQwenClient
         if (result.Content == null)
         {
             _logger.LogWarning("视觉模型返回格式异常: {Response}", rawJson[..Math.Min(500, rawJson.Length)]);
-            result.Content = "视觉模型未返回有效内容";
+            result.Content = "视觉模型未返回有效内容。";
         }
 
         return result;
+    }
+
+    private static HttpClient BuildClient(QwenEndpointOptions options)
+    {
+        var client = new HttpClient { BaseAddress = new Uri(options.BaseUrl) };
+        if (!string.IsNullOrEmpty(options.ApiKey))
+        {
+            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {options.ApiKey}");
+        }
+
+        return client;
     }
 }

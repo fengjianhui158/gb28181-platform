@@ -1,6 +1,7 @@
 ﻿using System.Net.Http.Json;
 using System.Text.Json;
 using GB28181Platform.AiAgent;
+using GB28181Platform.Diagnostic.Browser.VisibleField;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Playwright;
@@ -13,14 +14,20 @@ public class CameraBrowserAgent
     private readonly IConfiguration _config;
     private readonly ILogger<CameraBrowserAgent> _logger;
     private readonly DahuaRpc2Client _dahuaRpc2;
+    private readonly VisibleFieldConfigExtractor _visibleFieldExtractor;
+    private readonly ManufacturerNavigationOptions _manufacturerNavigationOptions;
 
     public CameraBrowserAgent(IQwenClient qwen, IConfiguration config,
-        ILogger<CameraBrowserAgent> logger, DahuaRpc2Client dahuaRpc2)
+        ILogger<CameraBrowserAgent> logger, DahuaRpc2Client dahuaRpc2,
+        VisibleFieldConfigExtractor visibleFieldExtractor,
+        ManufacturerNavigationOptions manufacturerNavigationOptions)
     {
         _qwen = qwen;
         _config = config;
         _logger = logger;
         _dahuaRpc2 = dahuaRpc2;
+        _visibleFieldExtractor = visibleFieldExtractor;
+        _manufacturerNavigationOptions = manufacturerNavigationOptions;
     }
 
     private async Task<(IPlaywright, IBrowser, IPage)> LaunchBrowserAsync(string ip, int port)
@@ -45,6 +52,7 @@ public class CameraBrowserAgent
         string expectedSipServerIp, string expectedServerId, string? manufacturer = null)
     {
         var mfr = (manufacturer ?? "").ToLower();
+        var navigationPaths = VisibleFieldNavigationResolver.Resolve(_manufacturerNavigationOptions, manufacturer);
 
         // ========== 浏览器登录 + RPC2 获取配置 ==========
         IPlaywright? pw = null;
@@ -133,6 +141,19 @@ public class CameraBrowserAgent
                 }
             }
 
+            var visibleFieldResult = await TryExtractVisibleFieldConfigAsync(page, navigationPaths);
+            if (visibleFieldResult.IsSuccess)
+            {
+                _logger.LogInformation("可见字段模式成功命中国标配置页，命中字段数: {Count}", visibleFieldResult.MatchedFields);
+                return new BrowserCheckResult
+                {
+                    Success = true,
+                    Analysis = AnalyzeVisibleConfig(visibleFieldResult.Config, expectedSipServerIp, expectedServerId)
+                };
+            }
+
+            _logger.LogInformation("可见字段模式未命中有效配置页: {Reason}", visibleFieldResult.FailureReason);
+
             // ========== 第二步：浏览器登录成功后，用 session 直接调 RPC2 获取国标配置 ==========
             await Task.Delay(3000);
 
@@ -169,26 +190,11 @@ public class CameraBrowserAgent
 
             // ========== 第三步：导航到国标配置页 ==========
 
-            var navPath = _config[$"Diagnostic:NavPaths:{mfr}"];
-
-            // 如果精确匹配不到，模糊匹配
-            if (string.IsNullOrEmpty(navPath) && !string.IsNullOrEmpty(manufacturer))
+            var primaryNavigationPath = navigationPaths.FirstOrDefault();
+            if (primaryNavigationPath is { Count: > 0 })
             {
-                var paths = _config.GetSection("Diagnostic:NavPaths").GetChildren();
-                foreach (var p in paths)
-                {
-                    if (mfr.Contains(p.Key.ToLower()) || p.Key.ToLower().Contains(mfr))
-                    {
-                        navPath = p.Value;
-                        break;
-                    }
-                }
-            }
-
-            if (!string.IsNullOrEmpty(navPath))
-            {
-                _logger.LogInformation("使用配置路径导航: {Path}", navPath);
-                await NavigateByPathAsync(page, navPath);
+                _logger.LogInformation("使用配置路径导航: {Path}", string.Join(" -> ", primaryNavigationPath));
+                await NavigateByPathAsync(page, primaryNavigationPath);
                 await Task.Delay(3000);
 
                 // 关键：清空之前收集的 RPC2 响应，只保留点击"平台接入"后的
@@ -217,7 +223,7 @@ public class CameraBrowserAgent
                 };
 
                 // 重新点击"平台接入"触发配置数据加载
-                var lastStep = navPath.Split("->").Select(s => s.Trim()).LastOrDefault();
+                var lastStep = primaryNavigationPath.LastOrDefault();
                 if (!string.IsNullOrEmpty(lastStep))
                 {
                     var el = await FindClickableByTextAsync(page, lastStep);
@@ -288,14 +294,14 @@ public class CameraBrowserAgent
             // ========== 第三步：提取配置 ==========
             // 策略0（最优）：主动调用大华 RPC2 接口获取 GBT28181 配置
             var dahuaRpcConfig = "";
-            if (!string.IsNullOrEmpty(navPath))
+            if (primaryNavigationPath is { Count: > 0 })
             {
                 dahuaRpcConfig = await TryFetchDahuaGBConfigViaRpc2Async(page, ip, port);
 
                 if (string.IsNullOrEmpty(dahuaRpcConfig))
                 {
                     // 兜底：重新点击最后一个导航步骤触发页面加载
-                    var lastStep = navPath.Split("->").Select(s => s.Trim()).LastOrDefault();
+                    var lastStep = primaryNavigationPath.LastOrDefault();
                     if (!string.IsNullOrEmpty(lastStep))
                     {
                         var el = await FindClickableByTextAsync(page, lastStep);
@@ -816,7 +822,12 @@ public class CameraBrowserAgent
     /// </summary>
     private async Task NavigateByPathAsync(IPage page, string navPath)
     {
-        var steps = navPath.Split("->").Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s));
+        var steps = navPath.Split("->").Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)).ToArray();
+        await NavigateByPathAsync(page, steps);
+    }
+
+    private async Task NavigateByPathAsync(IPage page, IReadOnlyList<string> steps)
+    {
         foreach (var step in steps)
         {
             _logger.LogInformation("路径导航: 查找 '{Step}'", step);
@@ -833,7 +844,7 @@ public class CameraBrowserAgent
                 _logger.LogWarning("路径导航: 未找到 '{Step}'", step);
             }
         }
-        _logger.LogInformation("获取 {Path} 页面内容成功", navPath);
+        _logger.LogInformation("获取 {Path} 页面内容成功", string.Join(" -> ", steps));
     }
 
     /// <summary>
@@ -887,24 +898,37 @@ public class CameraBrowserAgent
     }
 
     /// <summary>
-    /// DOM 模式：硬编码选择器（兜底）
+    /// DOM 模式：按页面可见字段提取国标配置
     /// </summary>
     public async Task<BrowserCheckResult> CheckCameraConfigByDomAsync(
         string ip, int port, string? username, string? password,
-        string expectedSipServerIp, string expectedServerId)
+        string expectedSipServerIp, string expectedServerId, string? manufacturer = null)
     {
         IPlaywright? pw = null;
         IBrowser? browser = null;
         try
         {
             (pw, browser, var page) = await LaunchBrowserAsync(ip, port);
+            var navigationPaths = VisibleFieldNavigationResolver.Resolve(_manufacturerNavigationOptions, manufacturer);
 
             if (!string.IsNullOrEmpty(username))
                 await SmartLoginAsync(page, username, password ?? "");
 
-            var configData = await ExtractPageConfigAsync(page);
-            var analysis = AnalyzeConfig(configData, expectedSipServerIp, expectedServerId);
-            return new BrowserCheckResult { Success = true, Analysis = analysis };
+            var extraction = await TryExtractVisibleFieldConfigAsync(page, navigationPaths);
+            if (!extraction.IsSuccess)
+            {
+                return new BrowserCheckResult
+                {
+                    Success = false,
+                    Analysis = $"DOM 模式未命中有效国标配置页: {extraction.FailureReason}"
+                };
+            }
+
+            return new BrowserCheckResult
+            {
+                Success = true,
+                Analysis = AnalyzeVisibleConfig(extraction.Config, expectedSipServerIp, expectedServerId)
+            };
         }
         catch (Exception ex)
         {
@@ -918,27 +942,140 @@ public class CameraBrowserAgent
         }
     }
 
-    private async Task<Dictionary<string, string>> ExtractPageConfigAsync(IPage page)
+    private async Task<VisibleFieldExtractionResult> TryExtractVisibleFieldConfigAsync(
+        IPage page,
+        IReadOnlyList<IReadOnlyList<string>> navigationPaths)
     {
-        var config = new Dictionary<string, string>();
-        var inputs = await page.QuerySelectorAllAsync("input[type='text'], input[type='number']");
-        foreach (var input in inputs)
+        var bestResult = await EvaluateVisibleFieldPagesAsync(page);
+        if (bestResult.IsSuccess)
         {
-            var name = await input.GetAttributeAsync("name") ?? await input.GetAttributeAsync("id") ?? "";
-            var value = await input.InputValueAsync();
-            if (!string.IsNullOrEmpty(name) && !string.IsNullOrEmpty(value))
-                config[name] = value;
+            return bestResult;
         }
-        return config;
+
+        foreach (var navigationPath in navigationPaths)
+        {
+            await NavigateByPathAsync(page, navigationPath);
+            await Task.Delay(1500);
+
+            var navigationResult = await EvaluateVisibleFieldPagesAsync(page);
+            if (navigationResult.IsSuccess)
+            {
+                return navigationResult;
+            }
+
+            if (navigationResult.MatchedFields > bestResult.MatchedFields)
+            {
+                bestResult = navigationResult;
+            }
+        }
+
+        if (bestResult.MatchedFields == 0 && string.IsNullOrWhiteSpace(bestResult.FailureReason))
+        {
+            bestResult.FailureReason = "未找到可见字段配置页";
+        }
+
+        return bestResult;
     }
 
-    private string AnalyzeConfig(Dictionary<string, string> config, string expectedSipIp, string expectedServerId)
+    private async Task<VisibleFieldExtractionResult> EvaluateVisibleFieldPagesAsync(IPage page)
     {
-        var lines = new List<string> { $"=== DOM 模式 === 提取到 {config.Count} 个配置项:" };
-        foreach (var (k, v) in config) lines.Add($"  {k} = {v}");
-        if (config.Count == 0) lines.Add("未能提取到配置信息");
+        VisibleFieldExtractionResult? bestResult = null;
+
+        void EvaluateHtml(string html, string source)
+        {
+            var result = VisibleFieldPageDetector.Evaluate(_visibleFieldExtractor, html);
+            if (result.IsSuccess)
+            {
+                result.FailureReason = "";
+                _logger.LogInformation("可见字段命中有效配置页: {Source}, 字段数={Count}", source, result.MatchedFields);
+                bestResult = result;
+                return;
+            }
+
+            if (bestResult == null || result.MatchedFields > bestResult.MatchedFields)
+            {
+                bestResult = result;
+                _logger.LogDebug("可见字段候选页: {Source}, 字段数={Count}", source, result.MatchedFields);
+            }
+        }
+
+        EvaluateHtml(await page.ContentAsync(), "main");
+        if (bestResult?.IsSuccess == true)
+        {
+            return bestResult;
+        }
+
+        foreach (var frame in page.Frames)
+        {
+            if (frame == page.MainFrame)
+            {
+                continue;
+            }
+
+            try
+            {
+                EvaluateHtml(await frame.ContentAsync(), frame.Url);
+                if (bestResult?.IsSuccess == true)
+                {
+                    return bestResult;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("读取 Frame HTML 失败: {Url}, {Msg}", frame.Url, ex.Message);
+            }
+        }
+
+        return bestResult ?? new VisibleFieldExtractionResult
+        {
+            IsSuccess = false,
+            FailureReason = "未找到可见字段配置页"
+        };
+    }
+
+    private string AnalyzeVisibleConfig(VisibleGbConfig config, string expectedSipIp, string expectedServerId)
+    {
+        static string MatchText(bool matched) => matched ? "匹配" : "不匹配";
+
+        var sipIpMatched = !string.IsNullOrWhiteSpace(config.SipServerIp) &&
+            string.Equals(config.SipServerIp, expectedSipIp, StringComparison.OrdinalIgnoreCase);
+        var serverIdMatched = !string.IsNullOrWhiteSpace(config.SipServerId) &&
+            string.Equals(config.SipServerId, expectedServerId, StringComparison.OrdinalIgnoreCase);
+
+        var lines = new List<string>
+        {
+            sipIpMatched && serverIdMatched ? "结论: 国标关键配置匹配" : "结论: 国标关键配置存在差异",
+            $"SIP服务器IP: 当前={DisplayValue(config.SipServerIp)}，期望={DisplayValue(expectedSipIp)}，结果={MatchText(sipIpMatched)}",
+            $"SIP服务器编号: 当前={DisplayValue(config.SipServerId)}，期望={DisplayValue(expectedServerId)}，结果={MatchText(serverIdMatched)}"
+        };
+
+        if (config.Enable.HasValue)
+        {
+            lines.Add($"接入使能: {(config.Enable.Value ? "启用" : "未启用")}");
+        }
+
+        AddLineIfPresent(lines, "SIP域", config.SipDomain);
+        AddLineIfPresent(lines, "SIP服务器端口", config.SipServerPort);
+        AddLineIfPresent(lines, "本地SIP端口", config.LocalSipPort);
+        AddLineIfPresent(lines, "注册有效期", config.RegisterExpiry);
+        AddLineIfPresent(lines, "心跳周期", config.Heartbeat);
+        AddLineIfPresent(lines, "最大心跳超时次数", config.HeartbeatTimeoutCount);
+        AddLineIfPresent(lines, "设备编号", config.DeviceId);
+        AddLineIfPresent(lines, "通道编号", config.ChannelId);
+
         return string.Join("\n", lines);
     }
+
+    private static void AddLineIfPresent(List<string> lines, string label, string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            lines.Add($"{label}: {value}");
+        }
+    }
+
+    private static string DisplayValue(string value) =>
+        string.IsNullOrWhiteSpace(value) ? "(空)" : value;
 
     /// <summary>
     /// 截图模式（保留）

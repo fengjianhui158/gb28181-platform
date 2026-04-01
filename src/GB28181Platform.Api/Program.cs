@@ -5,6 +5,7 @@ using GB28181Platform.Api.BackgroundServices;
 using GB28181Platform.Api.Hubs;
 using GB28181Platform.Application.Streams;
 using GB28181Platform.Diagnostic.Browser;
+using GB28181Platform.Diagnostic.Browser.VisibleField;
 using GB28181Platform.Diagnostic.Engine;
 using GB28181Platform.Diagnostic.Steps;
 using GB28181Platform.Infrastructure;
@@ -66,6 +67,23 @@ builder.Services.AddScoped<IDiagnosticEngine, DiagnosticEngine>();
 builder.Services.AddScoped<IDiagnosticStep, PingCheckStep>();
 builder.Services.AddScoped<IDiagnosticStep, PortCheckStep>();
 builder.Services.AddScoped<IDiagnosticStep, BrowserCheckStep>();
+builder.Services.AddSingleton(sp =>
+{
+    var options = new VisibleFieldAliasOptions();
+    builder.Configuration.GetSection("Diagnostic:VisibleFieldAliases").Bind(options.Fields);
+    return options;
+});
+builder.Services.AddSingleton(sp =>
+{
+    var options = new ManufacturerNavigationOptions();
+    builder.Configuration.GetSection("Diagnostic:Manufacturers").Bind(options.Manufacturers);
+    return options;
+});
+builder.Services.AddSingleton(sp =>
+{
+    var aliasOptions = sp.GetRequiredService<VisibleFieldAliasOptions>();
+    return new VisibleFieldConfigExtractor(aliasOptions.Fields);
+});
 builder.Services.AddSingleton<DahuaRpc2Client>();
 builder.Services.AddSingleton<CameraBrowserAgent>();
 
