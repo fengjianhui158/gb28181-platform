@@ -22,7 +22,8 @@ public class BrowserCheckStep : IDiagnosticStep
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
-        var expectedSipIp = _config["SipServer:ListenIp"] ?? "0.0.0.0";
+        // 优先读 PublicIp（平台对外 IP），后期可迁移到数据库
+        var expectedSipIp = _config["SipServer:PublicIp"] ?? _config["SipServer:ListenIp"] ?? "";
         var expectedServerId = _config["SipServer:ServerId"] ?? "";
         var mode = (_config["Diagnostic:BrowserCheckMode"] ?? "dom").ToLower();
 

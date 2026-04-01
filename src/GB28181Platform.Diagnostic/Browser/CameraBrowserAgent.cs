@@ -1,6 +1,7 @@
 ﻿using System.Net.Http.Json;
 using System.Text.Json;
 using GB28181Platform.AiAgent;
+using GB28181Platform.Diagnostic.Browser.Interactive;
 using GB28181Platform.Diagnostic.Browser.VisibleField;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -796,25 +797,243 @@ public class CameraBrowserAgent
     /// </summary>
     private async Task SmartLoginAsync(IPage page, string username, string password)
     {
-        var allInputs = await page.QuerySelectorAllAsync("input:visible");
-        IElementHandle? userInput = null, passInput = null;
+        var titleBefore = await page.TitleAsync();
+        _logger.LogInformation("SmartLogin 开始: url={Url}, title={Title}", page.Url, titleBefore);
 
-        foreach (var input in allInputs)
+        // 大华等摄像机页面 JS 环境会破坏 Playwright 参数序列化和 jQuery 会拦截 dispatchEvent
+        // 因此采用 Playwright 键盘模拟输入，完全绕过页面 JS 框架
+        // Step 1: 用最简 JS 探测 input 元素（不触发任何事件）
+        var inputInfo = await page.EvaluateAsync<string>("""
+            () => {
+                const allInputs = document.querySelectorAll('input');
+                const results = [];
+                for (const inp of allInputs) {
+                    const type = (inp.type || 'text').toLowerCase();
+                    const name = (inp.name || inp.id || '').toLowerCase();
+                    const vis = inp.offsetWidth > 0 || inp.offsetHeight > 0;
+                    results.push(type + ':' + name + ':' + vis);
+                }
+                return results.join('|');
+            }
+            """);
+        _logger.LogInformation("SmartLogin input探测: {Info}", inputInfo);
+
+        // Step 2: 关闭可能存在的弹窗（海康 el-message-box、浏览器 alert 等）
+        await DismissDialogsAsync(page);
+
+        // Step 3: 用 Playwright 键盘模拟填写用户名和密码
+        var userFilled = false;
+        var passFilled = false;
+
+        // 查找用户名输入框 — 兼容各厂商：海康(el-input)、大华(原生input)、宇视等
+        var userSelectors = new[] {
+            "input[name*='user' i]:visible",           // name 含 user（最精确）
+            "input[id*='user' i]:visible",             // id 含 user
+            "input[placeholder*='用户' i]:visible",    // 海康等中文占位符
+            "input[placeholder*='user' i]:visible",    // 英文占位符
+            "input[type='text']:visible",              // 通用 text input
+            "input:not([type='password']):not([type='hidden']):not([type='submit']):not([type='checkbox']):visible"
+        };
+        foreach (var sel in userSelectors)
         {
-            var type = (await input.GetAttributeAsync("type") ?? "text").ToLower();
-            if (type == "password") passInput = input;
-            else if (type == "text" || type == "") userInput ??= input;
+            try
+            {
+                var userInput = await page.QuerySelectorAsync(sel);
+                if (userInput != null)
+                {
+                    await userInput.ClickAsync(new() { Timeout = 3000, Force = true });
+                    await page.Keyboard.PressAsync("Control+a");
+                    await page.Keyboard.TypeAsync(username, new() { Delay = 50 });
+                    userFilled = true;
+                    _logger.LogInformation("SmartLogin 用户名已填入, selector={Sel}", sel);
+                    break;
+                }
+            }
+            catch { /* 选择器不匹配，继续尝试 */ }
         }
 
-        if (userInput != null) await userInput.FillAsync(username);
-        if (passInput != null) await passInput.FillAsync(password);
+        // 查找密码输入框 — 大华 dui.password 会隐藏真实 input，所以先找可见的，再找所有的
+        var passSelectors = new[] {
+            "input[type='password']:visible",
+            "input[placeholder*='密码' i]:visible",    // 海康中文占位符
+            "input[placeholder*='pass' i]:visible",    // 英文占位符
+            "input[type='password']",                   // 包括隐藏的（大华场景）
+            "input[name*='pass' i]",
+            "input[name*='pwd' i]",
+            "input[id*='pass' i]"
+        };
+        foreach (var sel in passSelectors)
+        {
+            try
+            {
+                var passInput = await page.QuerySelectorAsync(sel);
+                if (passInput != null)
+                {
+                    // 先尝试让元素可见（大华 dui.password 场景）
+                    try
+                    {
+                        await page.EvaluateAsync("""
+                            (el) => {
+                                if (el) {
+                                    el.style.display = '';
+                                    el.style.visibility = 'visible';
+                                    el.style.opacity = '1';
+                                    el.type = 'password';
+                                }
+                            }
+                            """, passInput);
+                    }
+                    catch { /* 部分页面 JS 环境不允许，忽略 */ }
+                    await Task.Delay(200);
+                    await passInput.ClickAsync(new() { Timeout = 3000, Force = true });
+                    await page.Keyboard.PressAsync("Control+a");
+                    await page.Keyboard.TypeAsync(password, new() { Delay = 50 });
+                    passFilled = true;
+                    _logger.LogInformation("SmartLogin 密码已填入, selector={Sel}", sel);
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug("SmartLogin 密码选择器 {Sel} 失败: {Msg}", sel, ex.Message);
+            }
+        }
 
-        var btn = await page.QuerySelectorAsync("button[type='submit'], input[type='submit'], button:has-text('登录'), button:has-text('Login')");
-        if (btn != null) await btn.ClickAsync();
-        else if (passInput != null) await passInput.PressAsync("Enter");
+        // 如果上面的方式都没找到密码框，最后兜底：Tab 键从用户名框切到密码框
+        if (userFilled && !passFilled)
+        {
+            _logger.LogInformation("SmartLogin 密码框未找到，尝试 Tab 键切换");
+            await page.Keyboard.PressAsync("Tab");
+            await Task.Delay(200);
+            await page.Keyboard.TypeAsync(password, new() { Delay = 50 });
+            passFilled = true;
+        }
 
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-        await Task.Delay(2000);
+        _logger.LogInformation("SmartLogin 填值结果: user={User}, pass={Pass}", userFilled, passFilled);
+
+        // 按优先级查找登录按钮：button > input[submit] > a 链接
+        var loginSelectors = new[]
+        {
+            "button[type='submit']",
+            "input[type='submit']",
+            "button:has-text('登录')",
+            "button:has-text('Login')",
+            "a:has-text('登录')",          // 大华等厂商用 <a> 标签做登录按钮
+            "a:has-text('Login')",
+            "span:has-text('登录')",
+            "[onclick*='login' i]",
+            "[onclick*='Login' i]"
+        };
+
+        IElementHandle? btn = null;
+        var matchedSelector = "";
+        foreach (var selector in loginSelectors)
+        {
+            btn = await page.QuerySelectorAsync(selector);
+            if (btn != null)
+            {
+                matchedSelector = selector;
+                break;
+            }
+        }
+
+        // 点击前先关闭可能的弹窗
+        await DismissDialogsAsync(page);
+
+        if (btn != null)
+        {
+            _logger.LogInformation("SmartLogin 点击登录按钮: selector={Selector}", matchedSelector);
+            await btn.ClickAsync(new() { Force = true, Timeout = 5000 });
+        }
+        else
+        {
+            _logger.LogInformation("SmartLogin 未找到登录按钮，尝试 Enter 键提交");
+            await page.Keyboard.PressAsync("Enter");
+        }
+
+        // SPA 页面 NetworkIdle 可能等不到，用短超时兜底
+        try
+        {
+            await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = 8000 });
+        }
+        catch (TimeoutException)
+        {
+            _logger.LogDebug("SmartLogin: WaitForLoadState 超时(8s)，继续执行");
+        }
+        await Task.Delay(3000);
+
+        // 验证登录是否成功
+        var titleAfter = await page.TitleAsync();
+        var urlAfter = page.Url;
+        _logger.LogInformation("SmartLogin 完成: title={TitleBefore}->{TitleAfter}, url={Url}",
+            titleBefore, titleAfter, urlAfter);
+
+        if (string.Equals(titleBefore, titleAfter, StringComparison.OrdinalIgnoreCase) &&
+            titleAfter.Contains("登录", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("SmartLogin 登录可能失败: 页面标题仍为 '{Title}'，尝试 JS 点击兜底", titleAfter);
+
+            // 兜底：通过 JS 直接触发页面上所有含"登录"文本的可点击元素
+            try
+            {
+                await page.EvaluateAsync("""
+                    () => {
+                        const els = document.querySelectorAll('a, button, input[type=submit], span, div');
+                        for (const el of els) {
+                            const text = (el.textContent || el.value || '').trim();
+                            if (text === '登录' || text === 'Login') {
+                                el.click();
+                                return;
+                            }
+                        }
+                    }
+                """);
+                await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+                await Task.Delay(3000);
+
+                var titleRetry = await page.TitleAsync();
+                _logger.LogInformation("SmartLogin JS兜底后: title={Title}, url={Url}", titleRetry, page.Url);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("SmartLogin JS兜底失败: {Msg}", ex.Message);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 关闭页面上的弹窗（海康 el-message-box、大华 alert、浏览器 dialog 等）
+    /// </summary>
+    private async Task DismissDialogsAsync(IPage page)
+    {
+        try
+        {
+            // 通用弹窗关闭：el-message-box（海康/Element Plus）、modal、layer 等
+            await page.EvaluateAsync("""
+                () => {
+                    // Element Plus / Element UI 弹窗
+                    document.querySelectorAll('.el-message-box__wrapper, .el-overlay, .v-modal').forEach(el => {
+                        el.style.display = 'none';
+                        el.remove();
+                    });
+                    document.querySelectorAll('.el-message-box__headerbtn, .el-message-box__close').forEach(el => el.click());
+
+                    // layer 弹窗（部分国产 UI）
+                    document.querySelectorAll('.layui-layer-shade, .layui-layer').forEach(el => el.remove());
+
+                    // 通用 modal 遮罩
+                    document.querySelectorAll('.modal-backdrop, .modal.show').forEach(el => el.remove());
+
+                    // 恢复 body 滚动
+                    document.body.style.overflow = '';
+                    document.body.classList.remove('el-popup-parent--hidden');
+                }
+                """);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug("DismissDialogs 失败(可忽略): {Msg}", ex.Message);
+        }
     }
 
     /// <summary>
@@ -834,6 +1053,7 @@ public class CameraBrowserAgent
             var el = await FindClickableByTextAsync(page, step);
             if (el != null)
             {
+                await el.ScrollIntoViewIfNeededAsync();
                 await el.ClickAsync();
                 await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
                 await Task.Delay(1500);
@@ -850,34 +1070,107 @@ public class CameraBrowserAgent
     /// <summary>
     /// 在主页面和所有 iframe 中查找包含指定文字的可点击元素
     /// </summary>
-    private async Task<IElementHandle?> FindClickableByTextAsync(IPage page, string text)
+    private async Task<ILocator?> FindClickableByTextAsync(IPage page, string text)
     {
-        var selectors = new[]
+        var mainFrameMatch = await FindClickableByTextAsync(page.MainFrame, text, "main");
+        if (mainFrameMatch != null)
         {
-            $"a:has-text('{text}')", $"span:has-text('{text}')", $"td:has-text('{text}')",
-            $"div:has-text('{text}')", $"li:has-text('{text}')", $"button:has-text('{text}')"
-        };
-
-        foreach (var sel in selectors)
-        {
-            var el = await page.QuerySelectorAsync(sel);
-            if (el != null) return el;
+            return mainFrameMatch;
         }
 
         foreach (var frame in page.Frames)
         {
             if (frame == page.MainFrame) continue;
-            foreach (var sel in selectors)
+            var frameMatch = await FindClickableByTextAsync(frame, text, frame.Url);
+            if (frameMatch != null)
             {
-                try
-                {
-                    var el = await frame.QuerySelectorAsync(sel);
-                    if (el != null) return el;
-                }
-                catch { }
+                return frameMatch;
             }
         }
         return null;
+    }
+
+    private async Task<ILocator?> FindClickableByTextAsync(IFrame frame, string text, string source)
+    {
+        var selectorDefinitions = new (string Selector, int Priority)[]
+        {
+            ($"button:text-is(\"{EscapeForTextSelector(text)}\")", 0),
+            ($"a:text-is(\"{EscapeForTextSelector(text)}\")", 1),
+            ($"li:text-is(\"{EscapeForTextSelector(text)}\")", 2),
+            ($"td:text-is(\"{EscapeForTextSelector(text)}\")", 3),
+            ($"span:text-is(\"{EscapeForTextSelector(text)}\")", 4),
+            ($"div:text-is(\"{EscapeForTextSelector(text)}\")", 5),
+            ($"button:has-text(\"{EscapeForTextSelector(text)}\")", 10),
+            ($"a:has-text(\"{EscapeForTextSelector(text)}\")", 11),
+            ($"li:has-text(\"{EscapeForTextSelector(text)}\")", 12),
+            ($"td:has-text(\"{EscapeForTextSelector(text)}\")", 13),
+            ($"span:has-text(\"{EscapeForTextSelector(text)}\")", 14),
+            ($"div:has-text(\"{EscapeForTextSelector(text)}\")", 15)
+        };
+
+        var candidates = new List<ClickableTextCandidate>();
+
+        foreach (var (selector, priority) in selectorDefinitions)
+        {
+            try
+            {
+                var locator = frame.Locator(selector);
+                var count = Math.Min(await locator.CountAsync(), 20);
+                for (var index = 0; index < count; index++)
+                {
+                    var candidate = locator.Nth(index);
+                    var candidateText = string.Empty;
+                    var isVisible = false;
+
+                    try
+                    {
+                        candidateText = (await candidate.InnerTextAsync()).Trim();
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        isVisible = await candidate.IsVisibleAsync();
+                    }
+                    catch
+                    {
+                        isVisible = false;
+                    }
+
+                    candidates.Add(new ClickableTextCandidate(selector, index, candidateText, isVisible, priority));
+                }
+            }
+            catch
+            {
+                // Ignore selectors unsupported in specific frames.
+            }
+        }
+
+        var best = ClickableTextCandidateSelector.SelectBest(candidates, text);
+        if (best == null)
+        {
+            return null;
+        }
+
+        _logger.LogInformation(
+            "路径导航: 命中 '{Step}' 于 {Source}, selector={Selector}, visible={Visible}, text={Text}",
+            text,
+            source,
+            best.Selector,
+            best.IsVisible,
+            best.Text);
+
+        return frame.Locator(best.Selector).Nth(best.Index);
+    }
+
+    private static string EscapeForTextSelector(string text)
+    {
+        return text
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("\"", "\\\"", StringComparison.Ordinal);
     }
 
     private async Task<string> GetPageLinksAsync(IPage page)
@@ -946,6 +1239,12 @@ public class CameraBrowserAgent
         IPage page,
         IReadOnlyList<IReadOnlyList<string>> navigationPaths)
     {
+        _logger.LogInformation("可见字段导航候选数: {Count}", navigationPaths.Count);
+        foreach (var navigationPath in navigationPaths)
+        {
+            _logger.LogInformation("可见字段导航候选: {Path}", string.Join(" -> ", navigationPath));
+        }
+
         var bestResult = await EvaluateVisibleFieldPagesAsync(page);
         if (bestResult.IsSuccess)
         {
@@ -954,13 +1253,56 @@ public class CameraBrowserAgent
 
         foreach (var navigationPath in navigationPaths)
         {
-            await NavigateByPathAsync(page, navigationPath);
-            await Task.Delay(1500);
+            _logger.LogInformation("开始按路径导航: {Path}", string.Join(" -> ", navigationPath));
+            var navigationAgent = new InteractiveNavigationAgent(_logger);
+            var navigationResults = await navigationAgent.NavigateAsync(page, navigationPath);
 
-            var navigationResult = await EvaluateVisibleFieldPagesAsync(page);
-            if (navigationResult.IsSuccess)
+            foreach (var stepResult in navigationResults)
             {
-                return navigationResult;
+                if (stepResult.Success)
+                {
+                    _logger.LogInformation(
+                        "交互式导航步骤: step={Step}, selector={Selector}, source={Source}, success={Success}",
+                        stepResult.Step,
+                        stepResult.Selector,
+                        stepResult.Source,
+                        stepResult.Success);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "交互式导航步骤: step={Step}, selector={Selector}, source={Source}, success={Success}, reason={Reason}",
+                        stepResult.Step,
+                        stepResult.Selector,
+                        stepResult.Source,
+                        stepResult.Success,
+                        stepResult.FailureReason);
+                }
+            }
+            // 导航完成后，SPA 页面需要通过 AJAX 加载表单数据
+            // 重试多次提取，等待数据加载完成
+            VisibleFieldExtractionResult navigationResult = null!;
+            for (var extractAttempt = 0; extractAttempt < 3; extractAttempt++)
+            {
+                var delay = extractAttempt == 0 ? 2000 : 3000;
+                await Task.Delay(delay);
+
+                navigationResult = await EvaluateVisibleFieldPagesAsync(page);
+                if (navigationResult.IsSuccess)
+                {
+                    return navigationResult;
+                }
+
+                if (navigationResult.MatchedFields > 0)
+                {
+                    _logger.LogInformation(
+                        "字段提取尝试 {Attempt}/3: 命中 {Count} 字段（不足阈值），等待 AJAX 数据加载...",
+                        extractAttempt + 1, navigationResult.MatchedFields);
+                }
+                else
+                {
+                    break; // 0 个字段说明不在正确页面，无需重试
+                }
             }
 
             if (navigationResult.MatchedFields > bestResult.MatchedFields)
@@ -974,23 +1316,40 @@ public class CameraBrowserAgent
             bestResult.FailureReason = "未找到可见字段配置页";
         }
 
+        _logger.LogInformation(
+            "可见字段提取失败: 字段数={Count}, 原因={Reason}, 命中={Matches}",
+            bestResult.MatchedFields,
+            bestResult.FailureReason,
+            FormatRawMatches(bestResult.Config.RawMatches));
+
         return bestResult;
     }
 
     private async Task<VisibleFieldExtractionResult> EvaluateVisibleFieldPagesAsync(IPage page)
     {
         VisibleFieldExtractionResult? bestResult = null;
+        var liveDomReader = new LiveDomFieldReader(_visibleFieldExtractor);
 
-        void EvaluateHtml(string html, string source)
+        void EvaluateResult(VisibleFieldExtractionResult result, string source)
         {
-            var result = VisibleFieldPageDetector.Evaluate(_visibleFieldExtractor, html);
             if (result.IsSuccess)
             {
                 result.FailureReason = "";
-                _logger.LogInformation("可见字段命中有效配置页: {Source}, 字段数={Count}", source, result.MatchedFields);
+                _logger.LogInformation(
+                    "可见字段命中有效配置页: {Source}, 字段数={Count}, 命中={Matches}",
+                    source,
+                    result.MatchedFields,
+                    FormatRawMatches(result.Config.RawMatches));
                 bestResult = result;
                 return;
             }
+
+            _logger.LogInformation(
+                "可见字段候选页评估: {Source}, 字段数={Count}, 原因={Reason}, 命中={Matches}",
+                source,
+                result.MatchedFields,
+                result.FailureReason,
+                FormatRawMatches(result.Config.RawMatches));
 
             if (bestResult == null || result.MatchedFields > bestResult.MatchedFields)
             {
@@ -999,7 +1358,7 @@ public class CameraBrowserAgent
             }
         }
 
-        EvaluateHtml(await page.ContentAsync(), "main");
+        EvaluateResult(await liveDomReader.ReadAsync(page), "main");
         if (bestResult?.IsSuccess == true)
         {
             return bestResult;
@@ -1014,7 +1373,7 @@ public class CameraBrowserAgent
 
             try
             {
-                EvaluateHtml(await frame.ContentAsync(), frame.Url);
+                EvaluateResult(await liveDomReader.ReadAsync(frame), frame.Url);
                 if (bestResult?.IsSuccess == true)
                 {
                     return bestResult;
@@ -1076,6 +1435,16 @@ public class CameraBrowserAgent
 
     private static string DisplayValue(string value) =>
         string.IsNullOrWhiteSpace(value) ? "(空)" : value;
+
+    private static string FormatRawMatches(Dictionary<string, string> rawMatches)
+    {
+        if (rawMatches.Count == 0)
+        {
+            return "(无)";
+        }
+
+        return string.Join("; ", rawMatches.Select(x => $"{x.Key}={DisplayValue(x.Value)}"));
+    }
 
     /// <summary>
     /// 截图模式（保留）

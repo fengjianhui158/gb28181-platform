@@ -81,7 +81,7 @@ public class VisibleFieldNavigationOptionsTests
 
         Assert.Equal("dom", config["Diagnostic:BrowserCheckMode"]);
         Assert.Contains("SIP Server IP", aliases.Fields["SipServerIp"]);
-        Assert.Equal("平台接入", manufacturers.Manufacturers["hikvision"].NavigationPaths[0][3]);
+        Assert.Equal("GB28181", manufacturers.Manufacturers["hikvision"].NavigationPaths[0][3]);
     }
 
     private static IConfigurationRoot BuildConfig(string json)

@@ -1,15 +1,37 @@
 <template>
   <div class="chat-page">
-    <div class="tech-card chat-container">
-      <div class="panel-title">AI 智能运维助手</div>
+    <aside class="slogan-panel">
+      <div class="slogan-shell">
+        <div class="slogan-kicker">X-Link AI Manifesto</div>
+        <div class="slogan-list">
+          <div
+            v-for="(line, index) in slogans"
+            :key="line"
+            class="slogan-line"
+            :style="{ '--line-index': index }"
+          >
+            {{ line }}
+          </div>
+        </div>
+      </div>
+    </aside>
 
-      <!-- 快捷问题 -->
+    <div class="tech-card chat-container">
+      <div class="chat-header">
+        <div class="panel-title">X-Link 智能体</div>
+        <div class="panel-subtitle">
+          <span class="subtitle-label">智语脉冲</span>
+          <transition name="subtitle-fade" mode="out-in">
+            <span :key="activeSlogan" class="subtitle-text">{{ activeSlogan }}</span>
+          </transition>
+        </div>
+      </div>
+
       <div class="quick-actions">
         <el-button size="small" @click="askQuick('当前有哪些离线设备？')">离线设备列表</el-button>
         <el-button size="small" @click="askQuick('系统整体运行状态如何？')">系统状态</el-button>
       </div>
 
-      <!-- 消息区域 -->
       <div class="messages" ref="messagesRef">
         <div v-for="(msg, i) in messages" :key="i" :class="['msg', `msg-${msg.role}`]">
           <div class="msg-label tech-mono">{{ msg.role === 'user' ? 'YOU' : 'AI' }}</div>
@@ -26,7 +48,6 @@
         </div>
       </div>
 
-      <!-- 输入区域 -->
       <div class="input-area">
         <el-input
           v-model="inputText"
@@ -44,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { chat } from '../api/ai'
 
 interface Message {
@@ -53,11 +74,22 @@ interface Message {
   typing?: boolean
 }
 
+const slogans = [
+  '一智在手，天下少有',
+  '一智在手，万联所有',
+  '一智在手，你有我有',
+  '一智在手，未来皆有'
+]
+
 const messages = ref<Message[]>([])
 const inputText = ref('')
 const loading = ref(false)
 const sessionId = ref('')
 const messagesRef = ref<HTMLElement>()
+const activeSloganIndex = ref(0)
+let sloganTimer: ReturnType<typeof setInterval> | null = null
+
+const activeSlogan = computed(() => slogans[activeSloganIndex.value])
 
 function typewriterEffect(text: string, index: number) {
   let i = 0
@@ -95,13 +127,9 @@ async function sendMessage() {
 
   try {
     const res: any = await chat(text, sessionId.value)
-    console.log('AI response:', JSON.stringify(res))
-    // axios 拦截器已解包 response.data，res = { code, data: { sessionId, reply } }
-    // 兼容两种情况
     const data = res.data || res
     sessionId.value = data.sessionId || data.data?.sessionId || sessionId.value
     const reply = data.reply || data.data?.reply || res.reply || '暂无回复'
-    console.log('Extracted reply:', reply)
     const msg: Message = { role: 'assistant', content: '', typing: true }
     messages.value.push(msg)
     typewriterEffect(reply, messages.value.length - 1)
@@ -112,26 +140,297 @@ async function sendMessage() {
     scrollToBottom()
   }
 }
+
+onMounted(() => {
+  sloganTimer = setInterval(() => {
+    activeSloganIndex.value = (activeSloganIndex.value + 1) % slogans.length
+  }, 2400)
+})
+
+onBeforeUnmount(() => {
+  if (sloganTimer) {
+    clearInterval(sloganTimer)
+  }
+})
 </script>
 
 <style scoped>
-.chat-page { padding: 16px; height: calc(100vh - 120px); display: flex; }
-.chat-container { flex: 1; display: flex; flex-direction: column; padding: 16px; }
-.panel-title { font-size: 14px; color: var(--tech-text-secondary); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--tech-border); }
+.chat-page {
+  position: relative;
+  height: calc(100vh - 120px);
+  padding: 16px 16px 16px 300px;
+}
 
-.quick-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.slogan-panel {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  bottom: 16px;
+  width: 240px;
+  overflow: hidden;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top, rgba(0, 212, 255, 0.18), transparent 42%),
+    linear-gradient(180deg, rgba(8, 14, 28, 0.96), rgba(4, 8, 18, 0.98));
+  border: 1px solid rgba(0, 212, 255, 0.12);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 20px 44px rgba(0, 0, 0, 0.3);
+}
 
-.messages { flex: 1; overflow-y: auto; padding: 8px 0; display: flex; flex-direction: column; gap: 12px; }
+.slogan-panel::before {
+  content: '';
+  position: absolute;
+  inset: -24%;
+  background: linear-gradient(180deg, transparent 0%, rgba(0, 212, 255, 0.08) 45%, transparent 100%);
+  transform: rotate(8deg);
+  animation: slogan-scan 6s linear infinite;
+}
 
-.msg { display: flex; gap: 10px; }
-.msg-user { flex-direction: row-reverse; }
-.msg-label { font-size: 11px; color: var(--tech-text-muted); padding-top: 6px; min-width: 24px; }
-.msg-user .msg-label { text-align: right; }
+.slogan-shell {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 22px;
+  height: 100%;
+  padding: 28px 22px;
+}
 
-.msg-bubble { max-width: 75%; padding: 10px 14px; border-radius: 8px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
-.msg-user .msg-bubble { background: rgba(0, 212, 255, 0.12); border: 1px solid var(--tech-border-glow); color: var(--tech-text-primary); }
-.msg-assistant .msg-bubble { background: var(--tech-bg-elevated); border: 1px solid var(--tech-border); color: var(--tech-text-primary); }
+.slogan-kicker {
+  color: rgba(153, 238, 255, 0.7);
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
 
-.input-area { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--tech-border); }
-.input-area .el-input { flex: 1; }
+.slogan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.slogan-line {
+  position: relative;
+  padding-left: 14px;
+  color: #dff8ff;
+  font-size: 20px;
+  line-height: 1.45;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-shadow:
+    0 0 14px rgba(0, 212, 255, 0.28),
+    0 0 26px rgba(0, 212, 255, 0.14);
+  opacity: calc(1 - var(--line-index) * 0.12);
+}
+
+.slogan-line::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.35em;
+  width: 4px;
+  height: 1.1em;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--tech-primary-light), rgba(0, 255, 136, 0.7));
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.45);
+}
+
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  padding: 16px;
+}
+
+.chat-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--tech-border);
+}
+
+.panel-title {
+  color: var(--tech-text-primary);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.panel-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 24px;
+}
+
+.subtitle-label {
+  color: rgba(153, 238, 255, 0.68);
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.subtitle-text {
+  color: var(--tech-primary-light);
+  font-size: 14px;
+  font-weight: 600;
+  text-shadow: 0 0 12px rgba(0, 212, 255, 0.18);
+}
+
+.quick-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.msg {
+  display: flex;
+  gap: 10px;
+}
+
+.msg-user {
+  flex-direction: row-reverse;
+}
+
+.msg-label {
+  font-size: 11px;
+  color: var(--tech-text-muted);
+  padding-top: 6px;
+  min-width: 24px;
+}
+
+.msg-user .msg-label {
+  text-align: right;
+}
+
+.msg-bubble {
+  max-width: 75%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.msg-user .msg-bubble {
+  background: rgba(0, 212, 255, 0.12);
+  border: 1px solid var(--tech-border-glow);
+  color: var(--tech-text-primary);
+}
+
+.msg-assistant .msg-bubble {
+  background: var(--tech-bg-elevated);
+  border: 1px solid var(--tech-border);
+  color: var(--tech-text-primary);
+}
+
+.input-area {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--tech-border);
+}
+
+.input-area .el-input {
+  flex: 1;
+}
+
+.typing-cursor::after {
+  content: '|';
+  margin-left: 2px;
+  color: var(--tech-primary-light);
+  animation: blink 1s steps(1) infinite;
+}
+
+.subtitle-fade-enter-active,
+.subtitle-fade-leave-active {
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+.subtitle-fade-enter-from,
+.subtitle-fade-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes slogan-scan {
+  0% {
+    transform: translateY(-32%) rotate(8deg);
+  }
+  100% {
+    transform: translateY(32%) rotate(8deg);
+  }
+}
+
+@media (max-width: 1280px) {
+  .chat-page {
+    padding-left: 272px;
+  }
+
+  .slogan-panel {
+    width: 208px;
+  }
+
+  .slogan-line {
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 980px) {
+  .chat-page {
+    padding: 16px;
+    height: auto;
+  }
+
+  .slogan-panel {
+    position: relative;
+    left: auto;
+    top: auto;
+    bottom: auto;
+    width: 100%;
+    min-height: 220px;
+    margin-bottom: 16px;
+  }
+
+  .chat-container {
+    min-height: 620px;
+  }
+}
+
+@media (max-width: 768px) {
+  .panel-subtitle {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .slogan-line {
+    font-size: 16px;
+  }
+
+  .msg-bubble {
+    max-width: 88%;
+  }
+}
 </style>
