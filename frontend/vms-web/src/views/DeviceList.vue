@@ -26,8 +26,8 @@
     </div>
 
     <!-- 设备表格 -->
-    <div class="tech-card" style="padding: 0">
-      <el-table :data="filteredDevices" v-loading="deviceStore.loading" stripe>
+    <div class="tech-card device-table-card" style="padding: 0">
+      <el-table class="device-table" :data="filteredDevices" v-loading="deviceStore.loading" stripe>
         <el-table-column prop="id" label="设备编码" width="220">
           <template #default="{ row }">
             <span class="tech-mono">{{ row.id }}</span>
@@ -207,5 +207,32 @@ onMounted(() => loadDevices())
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.device-table-card :deep(.el-table),
+.device-table-card :deep(.el-table__inner-wrapper),
+.device-table-card :deep(.el-table__header-wrapper),
+.device-table-card :deep(.el-table__body-wrapper) {
+  background: transparent;
+}
+
+.device-table-card :deep(.el-table th.el-table__cell) {
+  background: var(--tech-bg-elevated);
+  color: var(--tech-text-secondary);
+  border-bottom-color: var(--tech-border);
+}
+
+.device-table-card :deep(.el-table td.el-table__cell) {
+  background: var(--tech-bg-card);
+  color: var(--tech-text-primary);
+  border-bottom-color: var(--tech-border);
+}
+
+.device-table-card :deep(.el-table__body tr.el-table__row--striped > td.el-table__cell) {
+  background: rgba(26, 31, 54, 0.78);
+}
+
+.device-table-card :deep(.el-table__body tr:hover > td.el-table__cell) {
+  background: var(--tech-bg-hover) !important;
 }
 </style>

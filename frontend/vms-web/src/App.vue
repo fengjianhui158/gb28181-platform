@@ -1,7 +1,7 @@
 <template>
   <el-container style="height: 100vh">
     <el-aside width="200px" class="tech-sidebar">
-      <div class="logo">GB28181 平台</div>
+      <div class="logo">X-Link 安联智体</div>
       <el-menu
         :default-active="route.path"
         router

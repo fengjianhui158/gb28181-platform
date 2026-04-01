@@ -59,6 +59,36 @@ public class VisibleFieldConfigExtractorTests
     }
 
     [Fact]
+    public void Extract_FromWrappedSplitIpInputs_MergesIntoSingleIp()
+    {
+        var extractor = VisibleFieldConfigExtractor.CreateForTests(new Dictionary<string, List<string>>
+        {
+            ["SipServerIp"] = ["SIP服务器IP"]
+        });
+
+        var html = """
+        <div class="ui-form-item">
+          <label>SIP服务器IP</label>
+          <div class="u-input-group u-ip">
+            <input value="188" />
+            <span>.</span>
+            <input value="18" />
+            <span>.</span>
+            <input value="33" />
+            <span>.</span>
+            <input value="138" />
+          </div>
+          <label>SIP服务器端口</label>
+          <input value="5060" />
+        </div>
+        """;
+
+        var result = extractor.ExtractFromHtml(html);
+
+        Assert.Equal("188.18.33.138", result.Config.SipServerIp);
+    }
+
+    [Fact]
     public void Extract_FromSelectAndInput_PreservesDisplayValues()
     {
         var extractor = VisibleFieldConfigExtractor.CreateForTests(new Dictionary<string, List<string>>

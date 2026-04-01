@@ -71,6 +71,17 @@ public class VisibleFieldConfigExtractor
 
         while (current is not null)
         {
+            if (current.QuerySelectorAll("input,select,textarea").Length > 0)
+            {
+                var nestedControls = current.QuerySelectorAll("input,select,textarea").ToArray();
+                if (nestedControls.Length > 0)
+                {
+                    controls.AddRange(nestedControls);
+                    current = current.NextElementSibling;
+                    continue;
+                }
+            }
+
             if (IsControl(current))
             {
                 controls.Add(current);
