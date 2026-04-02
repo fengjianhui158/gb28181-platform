@@ -1,4 +1,6 @@
+using System.Security.Claims;
 using GB28181Platform.AiAgent;
+using GB28181Platform.AiAgent.Contracts;
 using GB28181Platform.Domain.Common;
 using Microsoft.AspNetCore.Mvc;
 
@@ -17,35 +19,25 @@ public class AiAgentController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>
-    /// AI 问答接口
-    /// </summary>
     [HttpPost("chat")]
-    public async Task<ApiResponse<ChatResponse>> Chat([FromBody] ChatRequest request)
+    public async Task<ApiResponse<AgentChatResponse>> Chat([FromBody] AgentChatRequest request, CancellationToken cancellationToken)
     {
-        var sessionId = request.SessionId ?? Guid.NewGuid().ToString("N");
-        _logger.LogInformation("AI 问答: SessionId={SessionId}, Message={Message}",
-            sessionId, request.Message);
+        var userId = TryGetUserId();
+        _logger.LogInformation("AI chat request received. UserId={UserId}, ConversationId={ConversationId}, ItemCount={ItemCount}",
+            userId, request.ConversationId, request.ContentItems.Count);
 
-        var reply = await _aiAgent.ChatAsync(sessionId, request.Message, request.DeviceId);
-
-        return ApiResponse<ChatResponse>.Ok(new ChatResponse
-        {
-            SessionId = sessionId,
-            Reply = reply
-        });
+        var response = await _aiAgent.ChatAsync(userId, request, cancellationToken);
+        return ApiResponse<AgentChatResponse>.Ok(response);
     }
-}
 
-public class ChatRequest
-{
-    public string? SessionId { get; set; }
-    public string? DeviceId { get; set; }
-    public string Message { get; set; } = string.Empty;
-}
+    private int TryGetUserId()
+    {
+        if (User is null)
+        {
+            return 0;
+        }
 
-public class ChatResponse
-{
-    public string SessionId { get; set; } = string.Empty;
-    public string Reply { get; set; } = string.Empty;
+        var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        return int.TryParse(claim, out var userId) ? userId : 0;
+    }
 }
