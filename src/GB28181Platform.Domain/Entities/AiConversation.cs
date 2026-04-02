@@ -16,6 +16,9 @@ public class AiConversation
     [SugarColumn(Length = 36)]
     public string SessionId { get; set; } = string.Empty;
 
+    [SugarColumn(Length = 36, IsNullable = true)]
+    public string? MessageId { get; set; }
+
     [SugarColumn(Length = 20, IsNullable = true)]
     public string? DeviceId { get; set; }
 
@@ -24,6 +27,15 @@ public class AiConversation
     /// </summary>
     [SugarColumn(Length = 20)]
     public string Role { get; set; } = string.Empty;
+
+    [SugarColumn(Length = 20, IsNullable = true)]
+    public string? ContentKind { get; set; }
+
+    [SugarColumn(Length = 255, IsNullable = true)]
+    public string? FileName { get; set; }
+
+    [SugarColumn(Length = 100, IsNullable = true)]
+    public string? MediaType { get; set; }
 
     [SugarColumn(ColumnDataType = "text")]
     public string Content { get; set; } = string.Empty;
@@ -34,5 +46,5 @@ public class AiConversation
     [SugarColumn(ColumnDataType = "text", IsNullable = true)]
     public string? FunctionArgs { get; set; }
 
-    public DateTime CreatedAt { get; set; } = DateTime.Now;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
