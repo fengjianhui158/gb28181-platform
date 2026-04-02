@@ -55,7 +55,7 @@
 - `frontend/vms-web/src/api/ai.ts`
 - `frontend/vms-web/src/views/AiChat.vue`
 
-### 删除
+### 最终删除（后置到 Runtime 完成切换后）
 
 - `src/GB28181Platform.AiAgent/IQwenClient.cs`
 - `src/GB28181Platform.AiAgent/QwenClient.cs`
@@ -716,12 +716,12 @@ git commit -m "feat(aiagent): add semantic kernel runtime skeleton"
 **文件：**
 - Create: `src/GB28181Platform.AiAgent/Capabilities/Plugins/DeviceCapabilityPlugin.cs`
 - Create: `src/GB28181Platform.AiAgent/Capabilities/Plugins/DiagnosticCapabilityPlugin.cs`
-- Delete: `src/GB28181Platform.AiAgent/Functions/GetDeviceStatusFunction.cs`
-- Delete: `src/GB28181Platform.AiAgent/Functions/GetDiagnosticLogsFunction.cs`
-- Delete: `src/GB28181Platform.AiAgent/Functions/ListOfflineDevicesFunction.cs`
-- Delete: `src/GB28181Platform.AiAgent/Functions/IAgentFunction.cs`
-- Delete: `src/GB28181Platform.AiAgent/Functions/FunctionRegistry.cs`
-- Delete: `tests/GB28181Platform.Tests/AiAgent/FunctionRegistryTests.cs`
+- Keep temporarily: `src/GB28181Platform.AiAgent/Functions/GetDeviceStatusFunction.cs`
+- Keep temporarily: `src/GB28181Platform.AiAgent/Functions/GetDiagnosticLogsFunction.cs`
+- Keep temporarily: `src/GB28181Platform.AiAgent/Functions/ListOfflineDevicesFunction.cs`
+- Keep temporarily: `src/GB28181Platform.AiAgent/Functions/IAgentFunction.cs`
+- Keep temporarily: `src/GB28181Platform.AiAgent/Functions/FunctionRegistry.cs`
+- Keep temporarily: `tests/GB28181Platform.Tests/AiAgent/FunctionRegistryTests.cs`
 - Test: `tests/GB28181Platform.Tests/AiAgent/AiAgentServiceTests.cs`
 
 - [ ] **Step 1：先写失败测试，验证服务已不再依赖旧函数注册机制**
@@ -831,22 +831,28 @@ public class DiagnosticCapabilityPlugin
 }
 ```
 
-- [ ] **Step 4：删除旧的手写函数体系并同步更新测试**
+- [ ] **Step 4：保留旧函数体系，先只新增 plugins 并更新测试说明**
 
-Delete the `Functions/` folder files listed above and replace `AiAgentServiceTests` so it targets runtime/application behavior rather than `FunctionRegistry`.
+此阶段**不要删除** `Functions/` 目录与 `FunctionRegistry`，因为旧 `AiAgentService` 仍依赖它们。这里只新增 plugins，并把 `AiAgentServiceTests` 的迁移目标调整为：
+
+- 当前阶段先允许旧服务继续存在
+- 下一阶段（Task 5）切换 `AiAgentService`
+- Task 7/9 再统一删除旧 runtime 与旧 functions
 
 - [ ] **Step 5：再次运行智能体相关测试**
 
 运行：`dotnet test tests/GB28181Platform.Tests/GB28181Platform.Tests.csproj --filter FullyQualifiedName~AiAgentServiceTests -v minimal`
 
-预期：PASS。
+预期：当前可接受两种结果：
+
+- 如果 `AiAgentServiceTests` 仍是旧测试，则保持 PASS
+- 如果已改造成面向新 runtime 的测试，则进入 Task 5 后再统一转绿
 
 - [ ] **Step 6：提交**
 
 ```bash
 git add src/GB28181Platform.AiAgent/Capabilities/Plugins tests/GB28181Platform.Tests/AiAgent/AiAgentServiceTests.cs
-git rm src/GB28181Platform.AiAgent/Functions/IAgentFunction.cs src/GB28181Platform.AiAgent/Functions/FunctionRegistry.cs src/GB28181Platform.AiAgent/Functions/GetDeviceStatusFunction.cs src/GB28181Platform.AiAgent/Functions/GetDiagnosticLogsFunction.cs src/GB28181Platform.AiAgent/Functions/ListOfflineDevicesFunction.cs tests/GB28181Platform.Tests/AiAgent/FunctionRegistryTests.cs
-git commit -m "refactor(aiagent): replace handwritten functions with semantic kernel plugins"
+git commit -m "feat(aiagent): add SK capability plugins"
 ```
 
 ---
@@ -1161,6 +1167,12 @@ git commit -m "feat(api): upgrade ai chat endpoint to multimodal contracts"
 - Delete: `src/GB28181Platform.AiAgent/QwenClient.cs`
 - Delete: `src/GB28181Platform.AiAgent/QwenEndpointRouting.cs`
 - Delete: `tests/GB28181Platform.Tests/AiAgent/QwenEndpointRoutingTests.cs`
+- Delete: `src/GB28181Platform.AiAgent/Functions/IAgentFunction.cs`
+- Delete: `src/GB28181Platform.AiAgent/Functions/FunctionRegistry.cs`
+- Delete: `src/GB28181Platform.AiAgent/Functions/GetDeviceStatusFunction.cs`
+- Delete: `src/GB28181Platform.AiAgent/Functions/GetDiagnosticLogsFunction.cs`
+- Delete: `src/GB28181Platform.AiAgent/Functions/ListOfflineDevicesFunction.cs`
+- Delete: `tests/GB28181Platform.Tests/AiAgent/FunctionRegistryTests.cs`
 
 - [ ] **Step 1：先写失败测试，覆盖图片与音频输入链路**
 
@@ -1254,7 +1266,7 @@ public async Task<AgentChatResponse> ExecuteAsync(
 }
 ```
 
-- [ ] **Step 5：移除旧的 Qwen 专用 runtime 文件**
+- [ ] **Step 5：在 Runtime 完成切换后，再移除旧 runtime 与旧 functions**
 
 Delete:
 
@@ -1262,6 +1274,12 @@ Delete:
 - `QwenClient.cs`
 - `QwenEndpointRouting.cs`
 - `QwenEndpointRoutingTests.cs`
+- `IAgentFunction.cs`
+- `FunctionRegistry.cs`
+- `GetDeviceStatusFunction.cs`
+- `GetDiagnosticLogsFunction.cs`
+- `ListOfflineDevicesFunction.cs`
+- `FunctionRegistryTests.cs`
 
 - [ ] **Step 6：运行完整测试**
 
@@ -1273,8 +1291,8 @@ Delete:
 
 ```bash
 git add src/GB28181Platform.AiAgent/Runtime src/GB28181Platform.AiAgent/Capabilities/Application/OpenAiCompatibleAudioTranscriptionService.cs
-git rm src/GB28181Platform.AiAgent/IQwenClient.cs src/GB28181Platform.AiAgent/QwenClient.cs src/GB28181Platform.AiAgent/QwenEndpointRouting.cs tests/GB28181Platform.Tests/AiAgent/QwenEndpointRoutingTests.cs
-git commit -m "feat(aiagent): integrate semantic kernel runtime for image and audio inputs"
+git rm src/GB28181Platform.AiAgent/IQwenClient.cs src/GB28181Platform.AiAgent/QwenClient.cs src/GB28181Platform.AiAgent/QwenEndpointRouting.cs src/GB28181Platform.AiAgent/Functions/IAgentFunction.cs src/GB28181Platform.AiAgent/Functions/FunctionRegistry.cs src/GB28181Platform.AiAgent/Functions/GetDeviceStatusFunction.cs src/GB28181Platform.AiAgent/Functions/GetDiagnosticLogsFunction.cs src/GB28181Platform.AiAgent/Functions/ListOfflineDevicesFunction.cs tests/GB28181Platform.Tests/AiAgent/QwenEndpointRoutingTests.cs tests/GB28181Platform.Tests/AiAgent/FunctionRegistryTests.cs
+git commit -m "feat(aiagent): integrate SK runtime + remove legacy functions"
 ```
 
 ---
