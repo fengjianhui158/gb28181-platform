@@ -1,6 +1,9 @@
 using GB28181Platform.AiAgent;
-using GB28181Platform.AiAgent.Functions;
-using GB28181Platform.Tests.Helpers;
+using GB28181Platform.AiAgent.Abstractions;
+using GB28181Platform.AiAgent.Capabilities.Application;
+using GB28181Platform.AiAgent.Contracts;
+using GB28181Platform.AiAgent.Conversation;
+using GB28181Platform.AiAgent.Multimodal;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
 using Xunit;
@@ -10,107 +13,78 @@ namespace GB28181Platform.Tests.AiAgent;
 public class AiAgentServiceTests
 {
     [Fact]
-    public async Task ChatAsync_ReturnsContent_WhenNoFunctionCall()
+    public async Task ChatAsync_DelegatesStructuredRequest_ToApplicationService()
     {
-        var qwen = Substitute.For<IQwenClient>();
-        qwen.ChatAsync(
-                Arg.Any<List<ChatMessage>>(),
-                Arg.Any<List<FunctionDefinition>>())
-            .Returns(new ChatResponse
+        var runtime = Substitute.For<IAgentRuntime>();
+        runtime.ExecuteAsync(Arg.Any<int>(), Arg.Any<NormalizedAgentInput>(), Arg.Any<IReadOnlyList<ConversationMessageRecord>>(), Arg.Any<CancellationToken>())
+            .Returns(new AgentChatResponse
             {
-                Content = "所有设备运行正常",
-                FinishReason = "stop"
+                ConversationId = "conv-001",
+                MessageId = "msg-001",
+                ContentItems = [new AgentContentItemDto { Kind = "text", Text = "all systems healthy" }]
             });
 
-        var registry = new FunctionRegistry(Array.Empty<IAgentFunction>());
-        var db = MockDbHelper.CreateForAiAgent();
-        var service = new AiAgentService(
-            qwen, registry, db, NullLogger<AiAgentService>.Instance);
+        var store = Substitute.For<IConversationStore>();
+        store.GetHistoryAsync(Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns([]);
 
-        var result = await service.ChatAsync("session1", "系统状态如何？");
+        var applicationService = new AiChatApplicationService(
+            runtime,
+            store,
+            Substitute.For<IAgentPromptProvider>(),
+            NullLogger<AiChatApplicationService>.Instance);
 
-        Assert.Equal("所有设备运行正常", result);
+        var service = new AiAgentService(applicationService);
+
+        var result = await service.ChatAsync(7, new AgentChatRequest
+        {
+            ConversationId = "conv-001",
+            ContentItems = [new AgentContentItemDto { Kind = "text", Text = "system status?" }]
+        });
+
+        Assert.Equal("conv-001", result.ConversationId);
+        await runtime.Received(1).ExecuteAsync(7, Arg.Any<NormalizedAgentInput>(), Arg.Any<IReadOnlyList<ConversationMessageRecord>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
-    public async Task ChatAsync_ExecutesFunctionCall_ThenReturnsFinalAnswer()
+    public async Task LegacyChatAsync_ConvertsTextOnlyRequest()
     {
-        var callCount = 0;
-        var qwen = Substitute.For<IQwenClient>();
-        qwen.ChatAsync(
-                Arg.Any<List<ChatMessage>>(),
-                Arg.Any<List<FunctionDefinition>>())
-            .Returns(_ =>
+        var runtime = Substitute.For<IAgentRuntime>();
+        runtime.ExecuteAsync(0, Arg.Any<NormalizedAgentInput>(), Arg.Any<IReadOnlyList<ConversationMessageRecord>>(), Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
             {
-                callCount++;
-                if (callCount == 1)
+                var input = callInfo.ArgAt<NormalizedAgentInput>(1);
+                return new AgentChatResponse
                 {
-                    return new ChatResponse
-                    {
-                        FunctionCall = new FunctionCall
-                        {
-                            Name = "get_device_status",
-                            Arguments = "{\"deviceId\":\"cam001\"}"
-                        },
-                        FinishReason = "function_call"
-                    };
-                }
-                return new ChatResponse
-                {
-                    Content = "摄像机 cam001 已离线，最后心跳 10:00",
-                    FinishReason = "stop"
+                    ConversationId = input.ConversationId,
+                    MessageId = "msg-001",
+                    ContentItems = [new AgentContentItemDto { Kind = "text", Text = "camera cam001 offline" }]
                 };
             });
 
-        var func = Substitute.For<IAgentFunction>();
-        func.Name.Returns("get_device_status");
-        func.Description.Returns("查询设备状态");
-        func.ParameterSchema.Returns(new { type = "object" });
-        func.ExecuteAsync(Arg.Any<string>())
-            .Returns("{\"status\":\"Offline\",\"lastKeepalive\":\"2026-03-28T10:00:00\"}");
+        var store = Substitute.For<IConversationStore>();
+        store.GetHistoryAsync(Arg.Any<int>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns([]);
 
-        var registry = new FunctionRegistry(new[] { func });
-        var db = MockDbHelper.CreateForAiAgent();
-        var service = new AiAgentService(
-            qwen, registry, db, NullLogger<AiAgentService>.Instance);
+        var applicationService = new AiChatApplicationService(
+            runtime,
+            store,
+            Substitute.For<IAgentPromptProvider>(),
+            NullLogger<AiChatApplicationService>.Instance);
 
-        var result = await service.ChatAsync("session1", "cam001 为什么离线了？");
+        var service = new AiAgentService(applicationService);
 
-        Assert.Equal("摄像机 cam001 已离线，最后心跳 10:00", result);
-        await func.Received(1).ExecuteAsync("{\"deviceId\":\"cam001\"}");
-    }
+        var result = await service.ChatAsync("session1", "why is cam001 offline?", "cam001");
 
-    [Fact]
-    public async Task ChatAsync_EnforcesMaxFunctionCallsLimit()
-    {
-        var qwen = Substitute.For<IQwenClient>();
-        qwen.ChatAsync(
-                Arg.Any<List<ChatMessage>>(),
-                Arg.Any<List<FunctionDefinition>>())
-            .Returns(new ChatResponse
-            {
-                FunctionCall = new FunctionCall
-                {
-                    Name = "get_device_status",
-                    Arguments = "{}"
-                },
-                FinishReason = "function_call"
-            });
-
-        var func = Substitute.For<IAgentFunction>();
-        func.Name.Returns("get_device_status");
-        func.Description.Returns("查询设备状态");
-        func.ParameterSchema.Returns(new { type = "object" });
-        func.ExecuteAsync(Arg.Any<string>()).Returns("{}");
-
-        var registry = new FunctionRegistry(new[] { func });
-        var db = MockDbHelper.CreateForAiAgent();
-        var service = new AiAgentService(
-            qwen, registry, db, NullLogger<AiAgentService>.Instance);
-
-        var result = await service.ChatAsync("session1", "test");
-
-        Assert.Equal("抱歉，分析过程超出了最大调用次数限制。", result);
-        await func.Received(5).ExecuteAsync(Arg.Any<string>());
+        Assert.Equal("camera cam001 offline", result);
+        await runtime.Received(1).ExecuteAsync(0,
+            Arg.Is<NormalizedAgentInput>(input =>
+                input.ConversationId == "session1" &&
+                input.DeviceId == "cam001" &&
+                input.Items.Count == 1 &&
+                input.Items[0].Kind == "text" &&
+                input.Items[0].Text == "why is cam001 offline?"),
+            Arg.Any<IReadOnlyList<ConversationMessageRecord>>(),
+            Arg.Any<CancellationToken>());
     }
 }

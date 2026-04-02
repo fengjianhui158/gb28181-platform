@@ -1,6 +1,11 @@
 using System.Threading.Channels;
 using GB28181Platform.AiAgent;
+using GB28181Platform.AiAgent.Abstractions;
+using GB28181Platform.AiAgent.Capabilities.Application;
+using GB28181Platform.AiAgent.Capabilities.Persistence;
 using GB28181Platform.AiAgent.Functions;
+using GB28181Platform.AiAgent.Prompts;
+using GB28181Platform.AiAgent.Runtime;
 using GB28181Platform.Api.BackgroundServices;
 using GB28181Platform.Api.Hubs;
 using GB28181Platform.Application.Streams;
@@ -97,6 +102,14 @@ builder.Services.AddScoped<IAgentFunction, GetDeviceStatusFunction>();
 builder.Services.AddScoped<IAgentFunction, GetDiagnosticLogsFunction>();
 builder.Services.AddScoped<IAgentFunction, ListOfflineDevicesFunction>();
 builder.Services.AddScoped<FunctionRegistry>();
+builder.Services.AddSingleton(sp =>
+{
+    return SemanticKernelModelRouter.FromConfiguration(builder.Configuration);
+});
+builder.Services.AddScoped<IAgentPromptProvider, DefaultAgentPromptProvider>();
+builder.Services.AddScoped<IConversationStore, SqlSugarConversationStore>();
+builder.Services.AddScoped<IAgentRuntime, SemanticKernelAgentRuntime>();
+builder.Services.AddScoped<AiChatApplicationService>();
 builder.Services.AddScoped<IAiAgentService, AiAgentService>();
 
 var app = builder.Build();
