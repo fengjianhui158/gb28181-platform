@@ -16,18 +16,36 @@ public class DiagnosticCapabilityPlugin
     [KernelFunction("get_diagnostic_logs")]
     public async Task<string> GetDiagnosticLogsAsync(string deviceId)
     {
-        var logs = await _db.Queryable<DiagnosticLog>()
+        var latestTask = await _db.Queryable<DiagnosticTask>()
             .Where(x => x.DeviceId == deviceId)
             .OrderBy(x => x.CreatedAt, OrderByType.Desc)
-            .Take(10)
+            .FirstAsync();
+
+        if (latestTask == null)
+        {
+            return "没有诊断任务";
+        }
+
+        var logs = await _db.Queryable<DiagnosticLog>()
+            .Where(x => x.TaskId == latestTask.Id)
+            .OrderBy(x => x.CreatedAt, OrderByType.Asc)
             .ToListAsync();
+
+        var sections = new List<string>
+        {
+            $"最新诊断任务: taskId={latestTask.Id}, deviceId={latestTask.DeviceId}, status={latestTask.Status}, createdAt={latestTask.CreatedAt:yyyy-MM-dd HH:mm:ss}",
+            $"最新诊断结论: {latestTask.Conclusion ?? "无"}"
+        };
 
         if (logs.Count == 0)
         {
-            return "没有诊断日志";
+            sections.Add("该任务没有诊断日志");
+            return string.Join('\n', sections);
         }
 
-        return string.Join('\n', logs.Select(x =>
+        sections.AddRange(logs.Select(x =>
             $"{x.CreatedAt:yyyy-MM-dd HH:mm:ss} [{x.StepName}] success={x.Success} detail={x.Detail} durationMs={x.DurationMs}"));
+
+        return string.Join('\n', sections);
     }
 }

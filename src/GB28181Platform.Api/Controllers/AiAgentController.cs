@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using GB28181Platform.AiAgent;
 using GB28181Platform.AiAgent.Contracts;
 using GB28181Platform.Domain.Common;
@@ -22,7 +24,7 @@ public class AiAgentController : ControllerBase
     [HttpPost("chat")]
     public async Task<ApiResponse<AgentChatResponse>> Chat([FromBody] AgentChatRequest request, CancellationToken cancellationToken)
     {
-        var userId = TryGetUserId();
+        var userId = ResolveUserId(request);
         _logger.LogInformation("AI chat request received. UserId={UserId}, ConversationId={ConversationId}, ItemCount={ItemCount}",
             userId, request.ConversationId, request.ContentItems.Count);
 
@@ -30,14 +32,33 @@ public class AiAgentController : ControllerBase
         return ApiResponse<AgentChatResponse>.Ok(response);
     }
 
-    private int TryGetUserId()
+    private int ResolveUserId(AgentChatRequest request)
     {
-        if (User is null)
+        if (User is not null)
         {
-            return 0;
+            var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            if (int.TryParse(claim, out var userId))
+            {
+                return userId;
+            }
         }
 
-        var claim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        return int.TryParse(claim, out var userId) ? userId : 0;
+        var clientKey = request.ClientId;
+        if (string.IsNullOrWhiteSpace(clientKey))
+        {
+            var httpContext = HttpContext;
+            var remoteIp = httpContext?.Connection.RemoteIpAddress?.ToString() ?? "anonymous";
+            var userAgent = httpContext?.Request.Headers["User-Agent"].ToString() ?? "unknown";
+            clientKey = $"{remoteIp}|{userAgent}";
+        }
+
+        return ComputeStablePositiveId(clientKey);
+    }
+
+    private static int ComputeStablePositiveId(string source)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(source));
+        var value = BitConverter.ToInt32(bytes, 0) & int.MaxValue;
+        return value == 0 ? 1 : value;
     }
 }

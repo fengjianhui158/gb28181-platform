@@ -72,7 +72,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { chat, type AgentChatRequest, type AgentChatResponse, type ApiResponse } from '../api/ai'
 
@@ -96,15 +96,78 @@ const messages = ref<Message[]>([])
 const inputText = ref('')
 const loading = ref(false)
 const conversationId = ref('')
+const clientId = ref('')
 const messagesRef = ref<HTMLElement>()
 const activeSloganIndex = ref(0)
 const boundDeviceId = computed(() => typeof route.query.deviceId === 'string' ? route.query.deviceId : '')
 let sloganTimer: ReturnType<typeof setInterval> | null = null
 
 const activeSlogan = computed(() => slogans[activeSloganIndex.value])
+const clientIdStorageKey = 'vms-ai-chat-client-id'
+const conversationStateStorageKey = computed(() =>
+  boundDeviceId.value
+    ? `vms-ai-chat-state:${boundDeviceId.value}`
+    : 'vms-ai-chat-state:global')
 
 function createMessageId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+}
+
+function getOrCreateClientId() {
+  if (typeof window === 'undefined') {
+    return createMessageId('browser')
+  }
+
+  const existing = window.localStorage.getItem(clientIdStorageKey)
+  if (existing) {
+    return existing
+  }
+
+  const created = createMessageId('browser')
+  window.localStorage.setItem(clientIdStorageKey, created)
+  return created
+}
+
+function restoreConversationState() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const raw = window.localStorage.getItem(conversationStateStorageKey.value)
+  if (!raw) {
+    return
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      conversationId?: string
+      messages?: Message[]
+    }
+
+    conversationId.value = parsed.conversationId ?? ''
+    messages.value = (parsed.messages ?? []).map(message => ({
+      ...message,
+      typing: false
+    }))
+  } catch {
+    window.localStorage.removeItem(conversationStateStorageKey.value)
+  }
+}
+
+function persistConversationState() {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const snapshot = {
+    conversationId: conversationId.value,
+    messages: messages.value.map(message => ({
+      ...message,
+      typing: false
+    }))
+  }
+
+  window.localStorage.setItem(conversationStateStorageKey.value, JSON.stringify(snapshot))
 }
 
 function typewriterEffect(text: string, index: number) {
@@ -184,6 +247,7 @@ async function sendMessage() {
     const payload: AgentChatRequest = {
       conversationId: conversationId.value || undefined,
       deviceId: boundDeviceId.value || undefined,
+      clientId: clientId.value || undefined,
       clientMessageId: createMessageId('client'),
       contentItems: [
         {
@@ -221,6 +285,8 @@ async function sendMessage() {
 }
 
 onMounted(() => {
+  clientId.value = getOrCreateClientId()
+  restoreConversationState()
   sloganTimer = setInterval(() => {
     activeSloganIndex.value = (activeSloganIndex.value + 1) % slogans.length
   }, 2400)
@@ -231,6 +297,10 @@ onBeforeUnmount(() => {
     clearInterval(sloganTimer)
   }
 })
+
+watch([messages, conversationId], () => {
+  persistConversationState()
+}, { deep: true })
 </script>
 
 <style scoped>

@@ -1,8 +1,8 @@
 using GB28181Platform.AiAgent.Abstractions;
-using GB28181Platform.AiAgent.Capabilities.Plugins;
 using GB28181Platform.AiAgent.Contracts;
 using GB28181Platform.AiAgent.Conversation;
 using GB28181Platform.AiAgent.Multimodal;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
@@ -15,8 +15,8 @@ public class SemanticKernelAgentRuntime : IAgentRuntime
     private readonly SemanticKernelOptions _options;
     private readonly IAgentPromptProvider _promptProvider;
     private readonly IAudioTranscriptionService _audioTranscriptionService;
-    private readonly DeviceCapabilityPlugin _deviceCapabilityPlugin;
-    private readonly DiagnosticCapabilityPlugin _diagnosticCapabilityPlugin;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly IAgentPluginRegistry _pluginRegistry;
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<SemanticKernelAgentRuntime> _logger;
     private readonly Func<Kernel, ChatHistory, OpenAIPromptExecutionSettings, CancellationToken, Task<ChatMessageContent>>? _chatExecutor;
@@ -25,11 +25,11 @@ public class SemanticKernelAgentRuntime : IAgentRuntime
         SemanticKernelOptions options,
         IAgentPromptProvider promptProvider,
         IAudioTranscriptionService audioTranscriptionService,
-        DeviceCapabilityPlugin deviceCapabilityPlugin,
-        DiagnosticCapabilityPlugin diagnosticCapabilityPlugin,
+        IServiceProvider serviceProvider,
+        IAgentPluginRegistry pluginRegistry,
         ILoggerFactory loggerFactory,
         ILogger<SemanticKernelAgentRuntime> logger)
-        : this(options, promptProvider, audioTranscriptionService, deviceCapabilityPlugin, diagnosticCapabilityPlugin, loggerFactory, logger, null)
+        : this(options, promptProvider, audioTranscriptionService, serviceProvider, pluginRegistry, loggerFactory, logger, null)
     {
     }
 
@@ -37,8 +37,8 @@ public class SemanticKernelAgentRuntime : IAgentRuntime
         SemanticKernelOptions options,
         IAgentPromptProvider promptProvider,
         IAudioTranscriptionService audioTranscriptionService,
-        DeviceCapabilityPlugin deviceCapabilityPlugin,
-        DiagnosticCapabilityPlugin diagnosticCapabilityPlugin,
+        IServiceProvider serviceProvider,
+        IAgentPluginRegistry pluginRegistry,
         ILoggerFactory loggerFactory,
         ILogger<SemanticKernelAgentRuntime> logger,
         Func<Kernel, ChatHistory, OpenAIPromptExecutionSettings, CancellationToken, Task<ChatMessageContent>>? chatExecutor)
@@ -46,8 +46,8 @@ public class SemanticKernelAgentRuntime : IAgentRuntime
         _options = options;
         _promptProvider = promptProvider;
         _audioTranscriptionService = audioTranscriptionService;
-        _deviceCapabilityPlugin = deviceCapabilityPlugin;
-        _diagnosticCapabilityPlugin = diagnosticCapabilityPlugin;
+        _serviceProvider = serviceProvider;
+        _pluginRegistry = pluginRegistry;
         _loggerFactory = loggerFactory;
         _logger = logger;
         _chatExecutor = chatExecutor;
@@ -59,7 +59,8 @@ public class SemanticKernelAgentRuntime : IAgentRuntime
         IReadOnlyList<ConversationMessageRecord> history,
         CancellationToken cancellationToken)
     {
-        var kernel = BuildKernel();
+        var endpoint = ResolveEndpoint(input, history);
+        var kernel = BuildKernel(endpoint);
         var chatHistory = await BuildChatHistoryAsync(input, history, cancellationToken);
         var settings = new OpenAIPromptExecutionSettings
         {
@@ -82,7 +83,7 @@ public class SemanticKernelAgentRuntime : IAgentRuntime
         {
             ConversationId = input.ConversationId,
             MessageId = Guid.NewGuid().ToString("N"),
-            Model = response.ModelId ?? _options.Text.Model,
+            Model = response.ModelId ?? endpoint.Model,
             ContentItems =
             [
                 new AgentContentItemDto { Kind = "text", Text = response.Content ?? string.Empty }
@@ -92,18 +93,57 @@ public class SemanticKernelAgentRuntime : IAgentRuntime
         };
     }
 
-    private Kernel BuildKernel()
+    private Kernel BuildKernel(SemanticKernelEndpointOptions endpoint)
     {
-        if (string.IsNullOrWhiteSpace(_options.Text.BaseUrl) || string.IsNullOrWhiteSpace(_options.Text.Model))
+        if (string.IsNullOrWhiteSpace(endpoint.BaseUrl) || string.IsNullOrWhiteSpace(endpoint.Model))
         {
-            throw new InvalidOperationException("SemanticKernel:TextModel configuration is required.");
+            throw new InvalidOperationException("Semantic Kernel endpoint configuration is required.");
         }
 
-        var kernel = SemanticKernelClientFactory.CreateKernel(_options.Text, _loggerFactory, "agent-runtime");
-        kernel.ImportPluginFromObject(_deviceCapabilityPlugin, "device");
-        kernel.ImportPluginFromObject(_diagnosticCapabilityPlugin, "diagnostic");
+        var kernel = SemanticKernelClientFactory.CreateKernel(endpoint, _loggerFactory, "agent-runtime");
+
+        foreach (var registration in _pluginRegistry.GetRegistrations())
+        {
+            var plugin = _serviceProvider.GetRequiredService(registration.ServiceType);
+            if (string.IsNullOrWhiteSpace(registration.PluginName))
+            {
+                kernel.ImportPluginFromObject(plugin);
+                continue;
+            }
+
+            kernel.ImportPluginFromObject(plugin, registration.PluginName);
+        }
+
         return kernel;
     }
+
+    private SemanticKernelEndpointOptions ResolveEndpoint(
+        NormalizedAgentInput input,
+        IReadOnlyList<ConversationMessageRecord> history)
+    {
+        var requiresVision = input.Items.Any(item => item.Kind == "image") ||
+            history.Any(message => message.Items.Any(item => item.Kind == "image"));
+
+        if (requiresVision && IsConfigured(_options.Vision))
+        {
+            return _options.Vision;
+        }
+
+        if (IsConfigured(_options.Text))
+        {
+            return _options.Text;
+        }
+
+        if (requiresVision)
+        {
+            throw new InvalidOperationException("SemanticKernel:VisionModel or SemanticKernel:TextModel configuration is required for image inputs.");
+        }
+
+        throw new InvalidOperationException("SemanticKernel:TextModel configuration is required.");
+    }
+
+    private static bool IsConfigured(SemanticKernelEndpointOptions endpoint)
+        => !string.IsNullOrWhiteSpace(endpoint.BaseUrl) && !string.IsNullOrWhiteSpace(endpoint.Model);
 
     private async Task<ChatHistory> BuildChatHistoryAsync(
         NormalizedAgentInput input,

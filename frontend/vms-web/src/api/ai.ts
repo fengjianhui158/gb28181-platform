@@ -11,6 +11,7 @@ export interface AgentContentItemDto {
 export interface AgentChatRequest {
   conversationId?: string
   deviceId?: string
+  clientId?: string
   clientMessageId?: string
   contentItems: AgentContentItemDto[]
 }

@@ -1,697 +1,540 @@
-# Semantic Kernel Multimodal Agent Design
+# Semantic Kernel 多模态智能体设计
 
-> Date: 2026-04-01
-> Status: Draft Approved For Planning
-> Workspace: `.worktrees/visible-field-browser-diagnostic`
-
----
-
-## 1. Background
-
-The current `GB28181Platform.AiAgent` implementation is a lightweight handwritten runtime around OpenAI-compatible chat completion:
-
-- `AiAgentService` manually builds message arrays
-- `QwenClient` manually calls `/v1/chat/completions`
-- `FunctionRegistry` and `IAgentFunction` manually expose tools
-- `AiConversation` is used mainly as an append-only log, not a real multi-turn conversation source
-- image analysis is a separate vision path, not part of a unified agent runtime
-
-This design is enough for text-first function calling, but it has structural limitations:
-
-- text, image, and future audio input are not unified
-- session handling is weaker than a real multi-turn conversation model
-- response shape is too narrow for model metadata, tool traces, citations, and usage
-- model/runtime concerns are mixed with business capability concerns
-- the current structure is hard to transplant into another project later
-
-The target is to replace the handwritten runtime with a unified Semantic Kernel based multimodal agent architecture while keeping implementation in the current project first and designing it so the reusable core can be extracted later.
+> 日期：2026-04-01  
+> 状态：设计已确认，可进入实施规划  
+> 工作区：`.worktrees/visible-field-browser-diagnostic`
 
 ---
 
-## 2. Goals
+## 1. 背景
 
-### 2.1 Primary Goals
+当前 `GB28181Platform.AiAgent` 的实现，本质上是一套围绕 OpenAI 兼容接口手写的轻量运行时：
 
-- Replace the handwritten `QwenClient + FunctionRegistry + AiAgentService` runtime with Semantic Kernel.
-- Unify text, image, and audio-file input into one agent architecture.
-- Support multiple users, multiple browsers, and multiple computers talking concurrently.
-- Make conversation state a real multi-turn context source instead of write-only records.
-- Upgrade the API contract to support multimodal input and richer output metadata.
-- Separate reusable agent runtime concerns from project-specific business capability concerns.
-- Keep the implementation in the current `GB28181Platform.AiAgent` project for now, while designing it for later extraction.
+- `AiAgentService` 手动拼装消息数组
+- `QwenClient` 手动调用 `/v1/chat/completions`
+- `FunctionRegistry` 与 `IAgentFunction` 手动暴露工具能力
+- `AiConversation` 更像是追加式日志，而不是真正的多轮会话上下文来源
+- 图片分析走的是独立视觉链路，没有纳入统一智能体运行时
 
-### 2.2 Secondary Goals
+这套实现对“文本优先 + 少量工具调用”是够用的，但结构上已经出现明显上限：
 
-- Reduce prompt/runtime coupling.
-- Allow future support for realtime voice without redesigning the whole system.
-- Keep the HTTP entry route conceptually stable: one main chat endpoint, one main application entry.
+- 文本、图片、未来音频输入没有统一模型
+- `sessionId` 语义偏弱，离真正多轮会话还有差距
+- 响应结构过窄，无法自然承载模型信息、工具调用轨迹、引用来源、Token 用量
+- 模型运行时与业务能力耦合较深
+- 后续想把这套智能体移植到其他项目时，复用成本偏高
 
-### 2.3 Non-Goals
-
-- First-phase realtime voice streaming.
-- Splitting the current solution into multiple new projects immediately.
-- Full backward compatibility with the current text-only request/response DTOs.
-- Long-lived dual runtime support between old and new agent architectures.
+本次设计的目标，是把现有手写运行时整体迁移为基于 `Semantic Kernel` 的统一多模态智能体架构，并且先落在当前项目里实现，但内部边界按“未来可抽离复用”来设计。
 
 ---
 
-## 3. Chosen Approach
+## 2. 目标
 
-The chosen approach is:
+### 2.1 主要目标
 
-**Option 2: Unified multimodal Semantic Kernel platform, realtime voice deferred**
+- 用 `Semantic Kernel` 替换当前手写的 `QwenClient + FunctionRegistry + AiAgentService` 运行时
+- 统一文本、图片、音频文件三类输入
+- 支持多个用户、多个浏览器、多个终端并发对话
+- 让会话历史成为真正的多轮上下文来源，而不是仅追加日志
+- 升级 API 契约，使其支持多模态输入与更丰富的输出元数据
+- 将可复用的智能体运行时能力与当前项目业务能力分层
+- 当前阶段仍保留在 `GB28181Platform.AiAgent` 单工程内实现
 
-This means:
+### 2.2 次要目标
 
-- full internal migration to Semantic Kernel
-- request/response model upgrade
-- real conversation model
-- unified text/image/audio-file input
-- runtime, prompts, conversations, and capabilities reorganized into clear sublayers
-- realtime voice intentionally left as a future input channel built on the same foundation
+- 降低 Prompt 与运行时实现的耦合
+- 为未来实时语音输入预留扩展空间
+- 尽量保持“一个主聊天入口”的 API 使用方式
 
-This approach is preferred over a compatibility-only migration because the current request, session, and multimodal limitations are structural. It is preferred over an all-at-once realtime design because realtime voice adds a separate class of transport and latency problems that would make the migration significantly riskier.
+### 2.3 非目标
+
+- 第一阶段不实现实时语音流
+- 第一阶段不强行拆成多个独立类库工程
+- 不追求与旧的纯文本 DTO 完全兼容
+- 不长期保留新旧两套 Agent 运行时并存
 
 ---
 
-## 4. High-Level Architecture
+## 3. 方案选择
 
-The `GB28181Platform.AiAgent` project remains a single project initially, but its internal structure is reorganized into focused sublayers:
+本次采用的方案是：
+
+**方案 2：统一多模态 Semantic Kernel 平台，实时语音后置**
+
+这意味着：
+
+- 内部运行时全面迁移到 `Semantic Kernel`
+- 请求与响应模型升级
+- 会话模型升级为真实多轮会话
+- 文本、图片、音频文件统一纳入同一条智能体链路
+- `Runtime / Prompts / Conversation / Capabilities` 职责明确拆分
+- 实时语音保留为下一阶段输入通道，不在第一版实现
+
+选择这个方案的原因是：
+
+- 单纯“只换内核、不动外层结构”无法根治当前请求模型、会话模型、多模态模型的结构问题
+- 一步到位把实时语音也做进去，风险面会显著扩大，不利于控制迁移质量
+
+---
+
+## 4. 总体架构
+
+`GB28181Platform.AiAgent` 当前阶段仍保留为单一工程，但内部按职责拆成多个子层：
 
 ```text
 GB28181Platform.AiAgent/
-├── Abstractions/
-├── Contracts/
-├── Conversation/
-├── Multimodal/
-├── Prompts/
-├── Runtime/
-└── Capabilities/
-    ├── Application/
-    ├── Plugins/
-    └── Persistence/
+├─ Abstractions/         // 抽象接口层，定义运行时、会话、提示词、音频转写等边界
+├─ Contracts/            // 输入输出契约层，请求 DTO、响应 DTO、内容项、元数据模型
+├─ Conversation/         // 会话模型层，定义会话、消息、内容项、角色、顺序等结构
+├─ Multimodal/           // 多模态标准化层，把文本/图片/音频统一转换为内部输入模型
+├─ Prompts/              // 提示词层，管理系统提示词、行为约束、输出规则
+├─ Runtime/              // Semantic Kernel 运行时层，负责 Kernel、模型路由、插件编排
+└─ Capabilities/         // 业务能力层，承接当前项目特有的应用服务、插件和持久化
+   ├─ Application/       // 应用编排层，负责请求落地、会话读取、运行时调用、响应组装
+   ├─ Plugins/           // Agent 可调用业务插件，如设备状态、诊断日志、离线设备等
+   └─ Persistence/       // 会话持久化实现层，对接当前项目数据库和实体模型
 ```
 
-### 4.1 Layer Responsibilities
+---
 
-#### `Abstractions/`
+## 5. 目录结构说明
 
-Reusable interfaces for the new architecture, such as:
+这一节专门说明每个目录应该放什么，避免后续实现时结构再混乱。
+
+### `Abstractions/`
+
+这一层只放抽象接口，不放业务实现。
+
+典型内容：
 
 - `IAgentRuntime`
 - `IConversationStore`
 - `IAgentPromptProvider`
 - `IAudioTranscriptionService`
-- `IModelRoutingStrategy`
+- 未来可能新增的模型路由、引用来源提供器等接口
 
-These abstractions must avoid direct dependency on `SqlSugar`, API controllers, or GB28181-specific domain behavior.
+要求：
 
-#### `Contracts/`
+- 不依赖 `SqlSugar`
+- 不依赖控制器
+- 不依赖 GB28181 业务实体
 
-External and internal contracts for multimodal chat:
+### `Contracts/`
 
-- request DTOs
-- response DTOs
-- content item models
-- usage/tool/citation metadata models
-- message result models
+这一层定义“系统之间怎么传数据”，主要用于：
 
-This layer defines the shape of data exchanged across API, application, runtime, and persistence boundaries.
+- API 请求对象
+- API 响应对象
+- 内容项模型
+- Token 用量
+- 工具调用轨迹
+- 引用来源
 
-#### `Conversation/`
+这一层的重点是“边界清晰”，而不是“承载业务逻辑”。
 
-The conversation domain for agent interactions:
+### `Conversation/`
 
-- conversation identity
-- conversation message identity
-- conversation content items
-- sequencing and role semantics
-- tool trace representation
+这一层定义会话数据模型，用于表达真实多轮上下文。
 
-This layer is responsible for representing real multi-turn state, not just individual request logs.
+典型内容：
 
-#### `Multimodal/`
+- 会话标识
+- 消息标识
+- 消息角色
+- 消息时间
+- 消息内多个内容项
 
-Input normalization and content conversion:
+这一层回答的问题是：
 
-- text content normalization
-- image content normalization
-- audio file normalization
-- conversion to Semantic Kernel chat content/history structures
+- 一轮对话怎么表示
+- 多轮对话如何组织
+- 一条消息里如何同时放文本、图片、音频
 
-This layer is responsible for "how input types become agent-readable content".
+### `Multimodal/`
 
-#### `Prompts/`
+这一层负责把外部输入统一转换成内部可消费结构。
 
-System prompt and instruction composition:
+典型职责：
 
-- default system prompt
-- multimodal-specific instruction additions
-- tool-usage policy
-- answer formatting policy
-- citation and diagnostic explanation rules
+- 标准化文本输入
+- 标准化图片输入
+- 标准化音频文件输入
+- 为 Runtime 组装统一输入模型
 
-This layer controls behavior, not capabilities.
+它不负责模型推理，只负责“输入整形”。
 
-#### `Runtime/`
+### `Prompts/`
 
-Semantic Kernel orchestration:
+这一层管理提示词，不放业务插件实现。
 
-- kernel creation
-- chat completion service registration
-- multimodal-capable routing
-- audio-to-text integration
-- plugin registration
-- tool invocation policy
-- execution pipeline
+典型职责：
 
-This layer controls "how the agent runs".
+- 系统提示词
+- 多模态输入约束
+- 工具调用策略
+- 输出风格规则
+- 回答格式与引用规范
 
-#### `Capabilities/`
+它控制的是“Agent 应该怎么做”，而不是“Agent 能做什么”。
 
-Project-specific behavior for the current platform:
+### `Runtime/`
 
-##### `Capabilities/Application/`
+这是智能体运行时核心层，用于承接 `Semantic Kernel`。
 
-Application services that adapt current project behavior into the new agent runtime.
+典型职责：
 
-##### `Capabilities/Plugins/`
+- 创建 `Kernel`
+- 注册 Chat Completion Service
+- 路由文本模型、视觉模型、音频转写模型
+- 注册 Plugins
+- 控制函数调用策略
+- 执行完整对话推理链路
 
-Business capabilities exposed to the agent, such as:
+它控制的是“Agent 怎么运行”。
 
-- get device status
-- list offline devices
-- get diagnostic logs
-- future report export
-- future device detail retrieval
+### `Capabilities/Application/`
 
-##### `Capabilities/Persistence/`
+这一层负责把“当前项目的请求入口”和“通用 Agent Runtime”接起来。
 
-Conversation and message persistence implementations for the current project's database/storage model.
+典型职责：
 
-This layer contains project behavior that can later be swapped when transplanting the agent system into another application.
+- 接收聊天请求
+- 读取会话历史
+- 组装当前请求上下文
+- 调用 Runtime
+- 落库消息
+- 组装响应 DTO
+
+它是当前项目的业务编排层。
+
+### `Capabilities/Plugins/`
+
+这一层是 Agent 真正可调用的业务能力集合。
+
+典型能力包括：
+
+- 获取设备状态
+- 查询离线设备
+- 查询诊断日志
+- 后续导出报表
+- 后续获取设备详情
+
+这些能力要做成 `Semantic Kernel Plugin` 风格，而不是保留旧的 `IAgentFunction` 机制。
+
+### `Capabilities/Persistence/`
+
+这一层负责会话和消息持久化实现。
+
+典型职责：
+
+- 读取历史会话
+- 追加用户消息
+- 追加助手消息
+- 从数据库记录恢复成会话消息结构
+
+这一层可以依赖当前项目的实体与数据库访问方式，但不要把这些依赖污染到 `Abstractions`、`Contracts`、`Runtime` 中。
 
 ---
 
-## 5. Reusable Core vs. Project-Specific Code
+## 6. 可复用核心与项目专用代码边界
 
-### 5.1 Future-Extractable Core
+### 6.1 未来可抽离复用的部分
 
-These parts should be written as if they may later move into another library:
+这些部分应按“未来可以独立抽成通用类库”来写：
 
 - `Abstractions`
 - `Contracts`
 - `Conversation`
 - `Multimodal`
-- most of `Runtime`
-- prompt composition primitives
+- `Runtime` 的大部分
+- Prompt 组合的基础能力
 
-These should not directly depend on:
+这些层不应直接依赖：
 
 - `Device`
 - `DiagnosticLog`
-- `AiConversation` entity
+- `AiConversation` 实体
 - `SqlSugar`
 - `GB28181Platform.Api`
 
-### 5.2 Current-Project Adaptation Layer
+### 6.2 当前项目专用的部分
 
-These parts remain project-specific:
+这些部分保留为当前项目业务适配层：
 
-- capability plugins that query current business data
-- prompt fragments that describe current platform behavior
-- persistence adapters that store conversation/message data in the current database
-- HTTP DTO mapping and upload handling specific to this project
+- 当前平台的业务插件
+- 当前项目专用的提示词片段
+- 当前数据库结构下的会话持久化适配
+- 当前 API 层的请求映射与上传处理方式
 
-The extraction strategy later is:
+未来如果迁移到其他项目，原则上只需要替换：
 
-- keep the reusable engine
-- replace `Capabilities`
-- replace project-specific persistence and prompts
+- `Capabilities`
+- 项目专用 Prompt
+- Persistence 适配实现
 
 ---
 
-## 6. API Design
+## 7. API 设计
 
-The current text-only model:
+旧模型是：
 
 - `ChatRequest.Message`
 - `ChatResponse.Reply`
 
-is not sufficient for multimodal agent behavior. The new API should support a single chat endpoint with richer request and response models.
+这对多模态智能体已经不够用，因此本次 API 需要升级。
 
-### 6.1 Request Shape
+### 7.1 请求模型
 
-The new request should represent one user message containing one or more content items.
+新的请求模型表示“一条用户消息”，而不是“只有一个 message 字符串”。
 
-Conceptually:
+核心字段应包括：
 
 - `conversationId`
-- `deviceId` or optional business context
+- `deviceId`
+- `clientMessageId`
 - `contentItems[]`
-- optional client metadata
+- 可选客户端标识等元数据
 
-Each `contentItem` should support:
+每个 `contentItem` 至少支持：
 
 - `text`
 - `image`
 - `audio`
 
-The first implementation must support:
+第一版必须支持：
 
-- text only
-- text + image
-- text + audio file
-- multiple items in one request
+- 纯文本
+- 文本 + 图片
+- 文本 + 音频文件
+- 一次请求内多个内容项
 
-The request model should be designed so realtime voice can later be introduced as another input channel without redesigning the message model.
+### 7.2 响应模型
 
-### 6.2 Response Shape
-
-The response should no longer be only a single assistant string. It should contain:
+响应不再只是单一字符串，而应包含：
 
 - `conversationId`
 - `messageId`
-- assistant content items
-- model info
-- tool call traces
-- citations
-- usage metadata
+- `contentItems`
+- `model`
+- `toolCalls`
+- `citations`
+- `usage`
 
-This lets the UI evolve later without redesigning the service contract again.
+这样前端后续如果要展示：
 
-### 6.3 Controller Strategy
+- 模型名
+- 工具调用痕迹
+- Token 用量
+- 引用来源
 
-The route can conceptually stay as one main chat endpoint under the existing AI controller, but the DTOs and returned structure will be upgraded.
+就不需要再次重构接口。
 
-The controller should:
+### 7.3 控制器策略
 
-- extract authenticated user context
-- translate HTTP request to application request contract
-- avoid logging raw user content in production-sensitive form
-- return the richer multimodal response structure
+控制器仍保持一个主聊天入口，但内部契约升级。
+
+控制器职责应包括：
+
+- 提取用户上下文
+- 将 HTTP 请求映射为应用层请求
+- 避免在日志中直接输出敏感原文
+- 返回结构化多模态响应
 
 ---
 
-## 7. Conversation Model
+## 8. 会话模型
 
-### 7.1 Current Problem
+### 8.1 当前问题
 
-Current `AiConversation` records are mainly append-only rows written after a reply. They do not serve as the authoritative conversation context source before model execution.
+当前 `AiConversation` 更像追加日志，而不是模型执行前的真实上下文来源。
 
-### 7.2 Target Model
+### 8.2 目标模型
 
-The new design treats conversation as a first-class concept:
+新模型将会话作为一等概念处理：
 
 - `Conversation`
 - `ConversationMessage`
 - `ConversationContentItem`
 
-Each conversation belongs to a user.
+每个会话归属于一个用户。  
+每个会话包含多条有序消息。  
+每条消息可包含多个内容项和可选执行元数据。
 
-Each conversation contains many ordered messages.
+### 8.3 多用户并发
 
-Each message contains one or more content items and optional execution metadata.
+必须支持：
 
-### 7.3 Multi-User Concurrency
+- 多个用户
+- 多台电脑
+- 多个浏览器
+- 并发对话请求
 
-The design must support:
+因此持久化层要支持：
 
-- multiple users
-- multiple computers
-- multiple browsers
-- concurrent chat requests
+- 按 `UserId` 归属
+- 按时间或序号有序读取
+- 安全地追加消息
+- 按 `UserId + ConversationId` 获取历史
 
-The persistence layer must therefore support:
+### 8.4 设备上下文
 
-- ownership by `UserId`
-- ordering by message creation time and/or sequence
-- safe concurrent appends
-- retrieving history by `UserId + ConversationId`
+`deviceId` 保留为可选业务上下文，而不是会话主归属标识。
 
-This architecture supports concurrent chatting across users and devices. Cross-tab live synchronization is optional and can later be added via SignalR/WebSocket without changing the storage or runtime model.
-
-### 7.4 Device Context
-
-`deviceId` should remain optional business context associated with a conversation message or conversation scope, not the primary owner of the conversation.
-
-Conversation ownership is by user.
-
-Device context is attached so the agent can answer device-scoped questions and invoke capabilities with the right target context.
+会话归属仍以用户为主。  
+设备上下文用于帮助 Agent 聚焦某个设备并调用对应业务能力。
 
 ---
 
-## 8. Multimodal Input Model
+## 9. 多模态输入模型
 
-### 8.1 Text
+### 9.1 文本
 
-Text content is added directly to the normalized message content set and transformed into Semantic Kernel chat history entries.
+文本直接进入标准化输入模型，再转换为 `Semantic Kernel` 可消费的聊天内容。
 
-### 8.2 Image
+### 9.2 图片
 
-Images are normalized into a common content item representation and then converted into multimodal chat content supported by Semantic Kernel.
+图片统一标准化为内容项，再转换为多模态聊天内容，纳入统一运行时。
 
-The current separate handwritten vision path is removed as the primary mechanism. Vision becomes part of the unified multimodal runtime.
+旧的独立视觉通路不再作为主路径存在。
 
-### 8.3 Audio File
+### 9.3 音频文件
 
-The first-phase audio path uses:
+第一阶段音频路径采用：
 
-1. audio file input
-2. audio-to-text service
-3. transcription text inserted into normalized message content
-4. unified Semantic Kernel agent execution
+1. 接收音频文件
+2. 使用音频转文字服务转写
+3. 将转写文本放入统一聊天上下文
+4. 由同一套 Runtime 继续工具调用与回答
 
-This avoids prematurely coupling the first release to realtime voice transport and streaming concerns.
-
-### 8.4 Future Realtime Voice
-
-Realtime voice is not implemented in this phase, but the architecture reserves it as:
-
-- another input transport
-- same conversation model
-- same normalized content pipeline
-- same Semantic Kernel runtime
-
-That means realtime is an additive channel later, not a redesign.
+这能解决“统一输入架构”问题，同时避免第一版就引入实时流式语音复杂度。
 
 ---
 
-## 9. Prompt Strategy
+## 10. Prompt 设计
 
-Prompts must be separated from capabilities.
+提示词层需要从“文本助手”升级为“多模态智能体”。
 
-The prompt system should provide:
+系统提示词至少要覆盖：
 
-- one main system prompt
-- optional scoped augmentations for multimodal behavior
-- tool usage guidance
-- answer style rules
-- citation/reference behavior
-- diagnostic explanation policy
+- 如何处理文本、图片、音频输入
+- 什么时候调用工具
+- 什么时候直接回答
+- 回答格式
+- 引用与解释策略
+- 信息不足时如何澄清
 
-The prompt policy must explicitly cover:
+建议结构：
 
-- how to answer with text, image, and audio-derived context
-- when to use tools vs. direct reasoning
-- how to respond when multimodal content is insufficient
-- how to reference diagnostics and platform facts
-
-Prompt assembly should be explicit and deterministic, not spread across controller, runtime, and plugins.
+- 一个主系统提示词
+- 少量场景增强片段
+- 不做过度复杂的 Prompt 拼装
 
 ---
 
-## 10. Semantic Kernel Runtime Design
+## 11. Runtime 运行链路
 
-### 10.1 Runtime Role
+推荐链路如下：
 
-Semantic Kernel is the execution engine, not the business application layer.
+1. Controller 接收请求
+2. `Capabilities/Application` 组装应用请求
+3. `Multimodal` 标准化输入
+4. `Conversation` 读取历史消息
+5. `Runtime` 创建 `Kernel`
+6. `Prompts` 注入系统提示词
+7. `Runtime` 注册 `Capabilities/Plugins`
+8. `Semantic Kernel` 执行推理与自动函数调用
+9. `Persistence` 写回用户消息与助手消息
+10. 返回结构化响应
 
-The runtime layer should be responsible for:
+这样设计的目的，是把：
 
-- building and configuring the `Kernel`
-- choosing model services
-- loading plugins
-- managing tool invocation behavior
-- executing the chat-completion-based agent
-- returning structured execution results
+- HTTP 接入
+- 业务插件
+- 会话存储
+- 模型运行
 
-### 10.2 Chat Completion and Tool Calling
-
-The current handwritten tool-calling loop is removed.
-
-Semantic Kernel handles:
-
-- plugin exposure
-- tool selection
-- tool invocation
-- multimodal chat orchestration
-
-The first design should use one primary chat-completion-based agent path.
-
-### 10.3 Vision Support
-
-Image inputs should be passed through Semantic Kernel's multimodal chat abstractions rather than through custom handwritten JSON request building.
-
-### 10.4 Audio Support
-
-Audio file support should use an audio-to-text abstraction integrated into the runtime flow before final chat completion invocation.
-
-### 10.5 Model Routing
-
-The runtime must support routing between:
-
-- primary text-capable model endpoint
-- multimodal/vision-capable model endpoint
-- audio-to-text endpoint if separate
-
-This routing belongs in runtime strategy code, not controllers or plugins.
+四者清晰分层，而不是继续揉在一个 `AiAgentService` 里。
 
 ---
 
-## 11. Capability Plugin Strategy
+## 12. 测试策略
 
-Current handwritten functions should be migrated into Semantic Kernel plugins.
+测试必须覆盖 4 层：
 
-Initial plugin set:
+### 12.1 Contracts / Multimodal 单元测试
 
-- device status
-- offline devices
-- diagnostic logs
+验证：
 
-Planned plugin growth:
+- 文本输入标准化
+- 图片输入标准化
+- 音频输入标准化
+- 多内容项顺序保持
 
-- device detail retrieval
-- report export
-- richer diagnostic workflows
+### 12.2 Runtime 单元测试
 
-Plugin methods should:
+验证：
 
-- accept strongly typed arguments when possible
-- stay focused on business capability
-- not contain prompt logic
-- not contain HTTP contract logic
+- `Kernel` 装配
+- Prompt 注入
+- Plugin 注册
+- 多模态输入转换
+- 音频转写接入
 
-`Capabilities` is the correct home for these current-project capabilities.
+### 12.3 Capabilities 单元测试
 
----
+验证：
 
-## 12. Logging and Safety
+- 设备状态能力
+- 离线设备能力
+- 诊断日志能力
+- 未来报表与设备详情能力
 
-### 12.1 Current Issue
+### 12.4 API / Persistence 集成测试
 
-The current controller logs raw user message content directly, which is not suitable for production-sensitive user input.
+验证：
 
-### 12.2 Target Behavior
-
-Logging should be changed so that:
-
-- request tracing keeps correlation identifiers
-- raw sensitive multimodal content is not logged by default
-- model execution metadata is logged in structured form
-- tool calls are traceable without exposing more content than necessary
-
-This is especially important once image and audio inputs are introduced.
+- 多用户会话隔离
+- 多轮历史读取
+- 响应结构正确
+- 会话落库正确
 
 ---
 
-## 13. Testing Strategy
+## 13. 迁移原则
 
-The migration must be verified in layers.
+迁移顺序遵循：
 
-### 13.1 Contract and Multimodal Tests
+1. 先建立新骨架
+2. 再切业务接线
+3. 最后删除旧实现
 
-Validate:
+这意味着在迁移中短暂存在过渡层是允许的，但不允许长期保留新旧两套 Runtime 并存。
 
-- content item normalization
-- text/image/audio input mapping
-- request/response serialization contracts
-
-### 13.2 Runtime Tests
-
-Validate:
-
-- kernel configuration
-- model routing
-- plugin registration
-- tool-calling behavior
-- prompt injection
-- usage/citation/tool trace capture
-
-### 13.3 Capability Tests
-
-Validate:
-
-- current business capability behavior remains correct after plugin migration
-- argument mapping is correct
-- capability outputs remain agent-consumable
-
-### 13.4 Conversation and Persistence Tests
-
-Validate:
-
-- conversation creation
-- history replay into runtime
-- multi-user isolation
-- concurrent append behavior
-- metadata persistence
-
-### 13.5 API Integration Tests
-
-Validate:
-
-- text-only requests
-- text + image requests
-- text + audio-file requests
-- upgraded response structure
-
----
-
-## 14. Migration Strategy
-
-Migration should be staged, not done as a single risky replacement.
-
-### Stage 1: New Structure and Contracts
-
-- add Semantic Kernel dependencies
-- introduce new folder structure
-- define abstractions, contracts, conversation, multimodal models
-
-### Stage 2: Runtime Skeleton
-
-- create runtime interfaces and Semantic Kernel wiring
-- add prompt provider structure
-- add model routing strategy
-
-### Stage 3: Capability Migration
-
-- migrate handwritten functions into Semantic Kernel plugins
-- add application service that bridges controller and runtime
-
-### Stage 4: Conversation and Persistence
-
-- implement real conversation store behavior
-- read history before model execution
-- persist structured message results after execution
-
-### Stage 5: API Upgrade
-
-- replace old text-only DTOs with multimodal request/response contracts
-- update controller behavior
-
-### Stage 6: Image and Audio File Integration
-
-- unify image path into runtime
-- add audio file transcription path
-
-### Stage 7: Old Runtime Removal
-
-- remove `IQwenClient`
-- remove `QwenClient`
-- remove `FunctionRegistry`
-- remove `IAgentFunction`
-- remove handwritten tool-calling loop
-
----
-
-## 15. Legacy Code Disposition
-
-### To Remove
+最终应删除的旧实现包括：
 
 - `IQwenClient`
 - `QwenClient`
-- `FunctionRegistry`
+- `QwenEndpointRouting`
 - `IAgentFunction`
-- old handwritten tool-calling logic
-- old text-only runtime assumptions
+- `FunctionRegistry`
+- 旧的手写 tool-calling 逻辑
 
-### To Temporarily Keep During Migration
+保留的只是：
 
-- route/controller location
-- high-level `IAiAgentService` naming if useful during transition
-- current business entities until conversation storage is evolved
-
-### To Keep Conceptually But Redesign
-
-- system prompts
-- conversation persistence
-- AI chat controller entry
+- 当前项目的业务能力
+- 当前项目的存储适配
+- 当前项目的 API 接入层
 
 ---
 
-## 16. Risks and Mitigations
+## 14. 结论
 
-### Risk: API Surface Expansion
+本设计的核心结论是：
 
-Upgrading the request/response contracts affects front-end and test code.
+- 当前项目的智能体应整体迁移到 `Semantic Kernel`
+- 文本、图片、音频文件应纳入统一多模态模型
+- 真实多轮会话应成为上下文来源
+- 运行时核心与业务能力应明确分层
+- 当前先保留在单工程内实现，但结构必须按未来可抽离来组织
 
-Mitigation:
-
-- define contracts early
-- update API and UI together
-- verify serialization explicitly
-
-### Risk: Conversation Model Migration
-
-Moving from append-only records to true conversation state can introduce data and compatibility issues.
-
-Mitigation:
-
-- keep migration steps explicit
-- write persistence tests before replacing old flow
-
-### Risk: Multimodal Routing Complexity
-
-Text, image, and audio may require different endpoints/models.
-
-Mitigation:
-
-- centralize routing in runtime strategy
-- do not let routing logic leak to controllers or plugins
-
-### Risk: Over-Coupling `Capabilities`
-
-`Capabilities` may become a dumping ground.
-
-Mitigation:
-
-- keep subfolders explicit: `Application`, `Plugins`, `Persistence`
-- forbid prompt logic and runtime orchestration logic there
-
-### Risk: Realtime Voice Scope Creep
-
-Adding realtime voice in the same migration would over-expand scope.
-
-Mitigation:
-
-- reserve architecture for realtime voice
-- defer implementation
-
----
-
-## 17. Final Design Decisions
-
-- Use Semantic Kernel as the unified runtime.
-- Keep implementation inside the existing `GB28181Platform.AiAgent` project initially.
-- Design internals for future extraction.
-- Use `Capabilities` as the project-specific integration layer name.
-- Keep prompts separate from capabilities.
-- Upgrade API contracts to multimodal request/response models.
-- Upgrade conversation storage to real multi-turn history.
-- Support text, image, and audio-file input in the first phase.
-- Support multiple users and multi-device concurrent chat.
-- Reserve realtime voice for a later phase.
-
----
-
-## 18. Expected Outcome
-
-After migration, the project will have:
-
-- one unified Semantic Kernel based multimodal agent architecture
-- one upgraded chat API capable of richer request/response structures
-- real multi-turn conversation history
-- multiple-user concurrent conversation support
-- cleaner separation between reusable runtime and project-specific capabilities
-- a codebase that can later be extracted into reusable agent libraries with much lower effort
-
+这份设计为后续实施计划提供边界、目录结构、接口方向和迁移顺序依据。

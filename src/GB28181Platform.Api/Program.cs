@@ -90,27 +90,19 @@ builder.Services.AddSingleton(sp =>
     return new VisibleFieldConfigExtractor(aliasOptions.Fields);
 });
 builder.Services.AddSingleton<DahuaRpc2Client>();
-builder.Services.AddSingleton<CameraBrowserAgent>();
+builder.Services.AddScoped<CameraBrowserAgent>();
 
 // Diagnostic Task Queue
 builder.Services.AddSingleton(Channel.CreateUnbounded<DiagnosticRequest>());
 builder.Services.AddHostedService<DiagnosticWorkerService>();
 
 // AI Agent
-builder.Services.AddSingleton(sp =>
-{
-    return SemanticKernelModelRouter.FromConfiguration(builder.Configuration);
-});
+builder.Services.AddAiAgentCore(builder.Configuration);
 builder.Services.AddHttpClient();
-builder.Services.AddScoped<IAgentPromptProvider, DefaultAgentPromptProvider>();
 builder.Services.AddScoped<IConversationStore, SqlSugarConversationStore>();
 builder.Services.AddScoped<IAudioTranscriptionService, OpenAiCompatibleAudioTranscriptionService>();
-builder.Services.AddScoped<IAgentPromptExecutor, SemanticKernelPromptExecutor>();
-builder.Services.AddScoped<DeviceCapabilityPlugin>();
-builder.Services.AddScoped<DiagnosticCapabilityPlugin>();
-builder.Services.AddScoped<IAgentRuntime, SemanticKernelAgentRuntime>();
-builder.Services.AddScoped<AiChatApplicationService>();
-builder.Services.AddScoped<IAiAgentService, AiAgentService>();
+builder.Services.AddAiAgentPlugin<DeviceCapabilityPlugin>("device");
+builder.Services.AddAiAgentPlugin<DiagnosticCapabilityPlugin>("diagnostic");
 
 var app = builder.Build();
 
