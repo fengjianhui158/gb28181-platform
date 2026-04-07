@@ -1,6 +1,11 @@
 using System.Threading.Channels;
 using GB28181Platform.AiAgent;
-using GB28181Platform.AiAgent.Functions;
+using GB28181Platform.AiAgent.Abstractions;
+using GB28181Platform.AiAgent.Capabilities.Application;
+using GB28181Platform.AiAgent.Capabilities.Plugins;
+using GB28181Platform.AiAgent.Capabilities.Persistence;
+using GB28181Platform.AiAgent.Prompts;
+using GB28181Platform.AiAgent.Runtime;
 using GB28181Platform.Api.BackgroundServices;
 using GB28181Platform.Api.Hubs;
 using GB28181Platform.Application.Streams;
@@ -85,19 +90,19 @@ builder.Services.AddSingleton(sp =>
     return new VisibleFieldConfigExtractor(aliasOptions.Fields);
 });
 builder.Services.AddSingleton<DahuaRpc2Client>();
-builder.Services.AddSingleton<CameraBrowserAgent>();
+builder.Services.AddScoped<CameraBrowserAgent>();
 
 // Diagnostic Task Queue
 builder.Services.AddSingleton(Channel.CreateUnbounded<DiagnosticRequest>());
 builder.Services.AddHostedService<DiagnosticWorkerService>();
 
 // AI Agent
-builder.Services.AddSingleton<IQwenClient, QwenClient>();
-builder.Services.AddScoped<IAgentFunction, GetDeviceStatusFunction>();
-builder.Services.AddScoped<IAgentFunction, GetDiagnosticLogsFunction>();
-builder.Services.AddScoped<IAgentFunction, ListOfflineDevicesFunction>();
-builder.Services.AddScoped<FunctionRegistry>();
-builder.Services.AddScoped<IAiAgentService, AiAgentService>();
+builder.Services.AddAiAgentCore(builder.Configuration);
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<IConversationStore, SqlSugarConversationStore>();
+builder.Services.AddScoped<IAudioTranscriptionService, OpenAiCompatibleAudioTranscriptionService>();
+builder.Services.AddAiAgentPlugin<DeviceCapabilityPlugin>("device");
+builder.Services.AddAiAgentPlugin<DiagnosticCapabilityPlugin>("diagnostic");
 
 var app = builder.Build();
 

@@ -1,6 +1,6 @@
 ﻿using System.Net.Http.Json;
 using System.Text.Json;
-using GB28181Platform.AiAgent;
+using GB28181Platform.AiAgent.Abstractions;
 using GB28181Platform.Diagnostic.Browser.Interactive;
 using GB28181Platform.Diagnostic.Browser.VisibleField;
 using Microsoft.Extensions.Configuration;
@@ -11,19 +11,19 @@ namespace GB28181Platform.Diagnostic.Browser;
 
 public class CameraBrowserAgent
 {
-    private readonly IQwenClient _qwen;
+    private readonly IAgentPromptExecutor _promptExecutor;
     private readonly IConfiguration _config;
     private readonly ILogger<CameraBrowserAgent> _logger;
     private readonly DahuaRpc2Client _dahuaRpc2;
     private readonly VisibleFieldConfigExtractor _visibleFieldExtractor;
     private readonly ManufacturerNavigationOptions _manufacturerNavigationOptions;
 
-    public CameraBrowserAgent(IQwenClient qwen, IConfiguration config,
+    public CameraBrowserAgent(IAgentPromptExecutor promptExecutor, IConfiguration config,
         ILogger<CameraBrowserAgent> logger, DahuaRpc2Client dahuaRpc2,
         VisibleFieldConfigExtractor visibleFieldExtractor,
         ManufacturerNavigationOptions manufacturerNavigationOptions)
     {
-        _qwen = qwen;
+        _promptExecutor = promptExecutor;
         _config = config;
         _logger = logger;
         _dahuaRpc2 = dahuaRpc2;
@@ -124,12 +124,8 @@ public class CameraBrowserAgent
 只返回 JSON，不要其他内容：
 {{""usernameSelector"": ""CSS选择器"", ""passwordSelector"": ""CSS选择器"", ""submitSelector"": ""CSS选择器""}}";
 
-                    var aiResp = await _qwen.ChatAsync(new List<ChatMessage>
-                    {
-                        new() { Role = "user", Content = loginPrompt }
-                    });
-
-                    var selectors = ParseJsonFromAiResponse(aiResp.Content ?? "");
+                    var aiResp = await _promptExecutor.ExecuteTextPromptAsync(loginPrompt);
+                    var selectors = ParseJsonFromAiResponse(aiResp);
                     if (selectors.HasValue)
                     {
                         await AiAssistedLoginAsync(page, selectors.Value, username, password ?? "");
@@ -175,15 +171,12 @@ public class CameraBrowserAgent
 
 请从 JSON 中提取国标/SIP 相关配置值，逐项与期望配置对比，给出结论。用中文回答。";
 
-                    var rpcResp = await _qwen.ChatAsync(new List<ChatMessage>
-                    {
-                        new() { Role = "user", Content = rpcPrompt }
-                    });
+                    var rpcResp = await _promptExecutor.ExecuteTextPromptAsync(rpcPrompt);
 
                     return new BrowserCheckResult
                     {
                         Success = true,
-                        Analysis = rpcResp.Content ?? "AI 未返回分析结果"
+                        Analysis = rpcResp
                     };
                 }
                 _logger.LogInformation("浏览器上下文 RPC2 调用未获取到国标配置，继续导航方式");
@@ -260,15 +253,12 @@ public class CameraBrowserAgent
 
 用中文回答，先说结论，再给详细分析。";
 
-                    var rpcResp = await _qwen.ChatAsync(new List<ChatMessage>
-                    {
-                        new() { Role = "user", Content = rpcPrompt }
-                    });
+                    var rpcResp = await _promptExecutor.ExecuteTextPromptAsync(rpcPrompt);
 
                     return new BrowserCheckResult
                     {
                         Success = true,
-                        Analysis = rpcResp.Content ?? "AI 未返回分析结果"
+                        Analysis = rpcResp
                     };
                 }
             }
@@ -284,11 +274,8 @@ public class CameraBrowserAgent
 请找到与 GB28181、国标、SIP、平台接入相关的菜单项。只返回 JSON：
 [{{""selector"": ""CSS选择器"", ""description"": ""说明""}}]";
 
-                    var navResp = await _qwen.ChatAsync(new List<ChatMessage>
-                    {
-                        new() { Role = "user", Content = navPrompt }
-                    });
-                    await AiAssistedNavigateAsync(page, navResp.Content ?? "");
+                    var navResp = await _promptExecutor.ExecuteTextPromptAsync(navPrompt);
+                    await AiAssistedNavigateAsync(page, navResp);
                 }
             }
 
@@ -434,7 +421,7 @@ public class CameraBrowserAgent
                  configSummary.Contains("GBT28181") || configSummary.Contains("ServerID") ||
                  configSummary.Contains("Enable") || inputValues.Count > 3);
 
-            ChatResponse configResp;
+            string configResp;
 
             if (!hasValidConfig)
             {
@@ -464,7 +451,7 @@ public class CameraBrowserAgent
 
 用中文回答，先说结论（配置是否匹配），再逐项列出从截图中读取到的值和对比结果。";
 
-                    configResp = await _qwen.ChatWithImageAsync(visionPrompt, screenshotBase64);
+                    configResp = await _promptExecutor.ExecuteVisionPromptAsync(visionPrompt, screenshotBase64);
                     _logger.LogInformation("视觉模型分析完成");
                 }
                 catch (Exception visionEx)
@@ -481,10 +468,7 @@ public class CameraBrowserAgent
 请分析上述信息，尝试提取国标/SIP 配置并与期望值对比。
 如果信息不足无法判断，请明确说明。用中文回答。";
 
-                    configResp = await _qwen.ChatAsync(new List<ChatMessage>
-                    {
-                        new() { Role = "user", Content = fallbackPrompt }
-                    });
+                    configResp = await _promptExecutor.ExecuteTextPromptAsync(fallbackPrompt);
                 }
             }
             else
@@ -504,16 +488,13 @@ public class CameraBrowserAgent
 
 用中文回答，先说结论，再给详细分析。";
 
-                configResp = await _qwen.ChatAsync(new List<ChatMessage>
-                {
-                    new() { Role = "user", Content = comparePrompt }
-                });
+                configResp = await _promptExecutor.ExecuteTextPromptAsync(comparePrompt);
             }
 
             return new BrowserCheckResult
             {
                 Success = true,
-                Analysis = configResp.Content ?? "AI 未返回分析结果"
+                Analysis = configResp
             };
         }
         catch (Exception ex)
